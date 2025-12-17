@@ -9,8 +9,8 @@ llm:
 
 # API keys for different services
 api_keys:
-  openai: "sk-1OUmm4rEXt4Hk3eB4HxWrgBD9ImjOINn9pxXIEx6rwxm68QR" # Updated placeholder
-  gemini: "sk-1OUmm4rEXt4Hk3eB4HxWrgBD9ImjOINn9pxXIEx6rwxm68QR"
+  openai: "" # Updated placeholder
+  gemini: ""
 
 # GPU configuration for parallel execution
 gpu_ids: [1,3,4,7] # List of GPU IDs to use for parallel agents. E.g., [0, 1, 2, 3]
