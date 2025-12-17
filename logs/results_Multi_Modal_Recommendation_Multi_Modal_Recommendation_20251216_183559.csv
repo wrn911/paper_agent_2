@@ -1,0 +1,3 @@
+node_id,status,processing_time_seconds,error_reason
+MVGAE_2021,Success,352.76,
+DualGNN_2021,Success,353.75,

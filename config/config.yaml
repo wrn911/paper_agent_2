@@ -1,0 +1,49 @@
+# config.yaml
+# Global configuration for the application.
+
+# LLM provider settings
+llm:
+  # provider: 'openai' or 'gemini'
+  provider: 'openai'
+  openai_base_url: "https://api2.aigcbest.top/v1" # Custom base URL for OpenAI-compatible API
+
+# API keys for different services
+api_keys:
+  openai: "sk-1OUmm4rEXt4Hk3eB4HxWrgBD9ImjOINn9pxXIEx6rwxm68QR" # Updated placeholder
+  gemini: "sk-1OUmm4rEXt4Hk3eB4HxWrgBD9ImjOINn9pxXIEx6rwxm68QR"
+
+# GPU configuration for parallel execution
+gpu_ids: [1,3,4,7] # List of GPU IDs to use for parallel agents. E.g., [0, 1, 2, 3]
+train_batch_size: 4 # Number of concurrent agents in training mode
+
+# File paths and directories
+paths:
+  # Base path for the LivePaperBench dataset
+  live_paper_bench: "LivePaperBench"
+  # Path to store logs
+  logs: "logs"
+  # Path to store outputs
+  output: "output"
+
+# Timeout settings for various operations (in seconds)
+timeouts:
+  # Timeout for code execution
+  code_runner: 600
+  # Timeout for API calls
+  api_call: 150
+
+# Default settings for different domains.
+# Each domain corresponds to a software project and has unique configurations.
+domains:
+  default:
+    graph_path: "LivePaperBench/Multi_Modal_Recommendation/graph_out.json"
+    code_path: "/data2/liyu/llh/rn/MMRec_2/src/models"
+    hyperparameter_path: "/data2/liyu/llh/rn/MMRec_2/src/configs/model"
+    work_dir: "/data2/liyu/llh/rn/MMRec_2/src"
+    run_command: "python run_benchmark.py --model={model_name} --dataset baby --gpu={gpu_id}"
+  Multi_Modal_Recommendation:
+    graph_path: "LivePaperBench/Multi_Modal_Recommendation/graph_out.json"
+    code_path: "/data2/liyu/llh/rn/MMRec_2/src/models"
+    hyperparameter_path: "/data2/liyu/llh/rn/MMRec_2/src/configs/model"
+    work_dir: "/data2/liyu/llh/rn/MMRec_2/src"
+    run_command: "python run_benchmark.py --model={model_name} --dataset baby --gpu={gpu_id}"

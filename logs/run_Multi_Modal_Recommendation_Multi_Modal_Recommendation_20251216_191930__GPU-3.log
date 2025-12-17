@@ -1,0 +1,403 @@
+2025-12-16 19:19:30 - INFO - Worker starting with 1 nodes.
+2025-12-16 19:19:30 - INFO - Starting train task for 1 nodes.
+2025-12-16 19:19:30 - INFO - [DualGNN] System prompt: 
+You are a paper-reproduction ReAct agent. Primary goal: faithfully implement the paper. Do not hide errors; use smoke-test feedback to fix root causes.
+
+[Tools & Permissions]
+- Only use the provided tools: read/write allowed files, apply patches to allowed files.
+- You may ONLY read/write the two specific files of the current paper: the model code file and the hyperparameter file. Everything else is forbidden.
+- You cannot execute shell commands yourself; the system will run the benchmark command and return the log.
+
+[Required Workflow]
+- Start with a mental shape/module check (inputs, outputs, losses, data flow).
+- Implement the paper as described; if the paper is ambiguous, state minimal assumptions inline as comments/config choices.
+- Write code + config to the given paths via tools (no raw code in replies).
+- Treat failing smoke tests as signals: inspect logs, fix the cause per paper intent, and re-write files. Do not wrap or silence errors to pass.
+- Avoid broad try/except; prefer explicit, narrow error handling only when the paper implies it.
+- Conclude with brief changes + whether tests (if any) were run/passed; note any remaining deviations from the paper.
+
+[Delivery Requirements]
+- Prioritize paper fidelity over “just running.” Keep hyperparameter search minimal and defaults reasonable.
+- Maintain device consistency; keep replies brief; no large code dumps in replies (write files instead).
+
+[Global Knowledge]
+- Use only generalizable tips from the knowledge base; ignore dataset-specific or misleading items unless explicitly applicable.
+- Current knowledge:
+
+
+2025-12-16 19:19:30 - INFO - [DualGNN] Attempt 1 user prompt: 
+Goal: Using paper info and graph context, implement the model code + hyperparameter file at the specified paths. If the paper is unclear, make the smallest explicit assumptions (comment them). System tests may run later and return logs to guide fixes—do not mask errors to “pass.”
+
+[Paper Node]
+- Title: DualGNN_2021
+- Method name: DualGNN
+- Core idea: The DualGNN method addresses two challenges in micro-video recommendation: (1) the need for personalized fusion patterns for multi-modal user preferences, as users place different emphasis on different modalities, and (2) the issue of modality-missing, where some micro-video modalities are absent. DualGNN introduces a framework that leverages both a user-microvideo bipartite graph and a user co-occurrence graph. It uses graph operations to learn user preferences for each modality, models user attentions across different modalities, and inductively learns multi-modal user preferences. The method improves fusion patterns for each user and provides robustness in modality-missing situations.
+- Method description: 
+# IV. METHOD
+
+In this section, we address the aforementioned challenges of modeling the users’ multi-modal preferences representation. We begin with a brief overview of our framework and then elaborate on its components.
+
+As illustrated in Figure 2, the DualGNN framework consists of three components: 1) a single-modal representation learning module, which performs the graph network operations to capture the modal-specific user preference and micro-video representation on each modality user-microvideo bipartite graph;
+
+![](images/a059e89748242d6806c5c6664add5ed98723088dcd2426a799dd2a7c070f7922.jpg)  
+Fig. 2. The overall framework of our proposed DualGNN. It consists of the single-modal representation learning module which captures the single-modal user preference on each modality user-microvideo bipartite graph, the multi-modal representation learning module that explicitly models the user’s tastes on different modalities and inductively learns the multi-modal user preference, and the prediction module to estimate the user’s preference towards the target micro-video.
+
+2) a multi-modal representation learning module that explicitly models the user’s taste on different modalities and inductively learns the multi-modal user preference; and 3) a prediction module that ranks the potential micro-videos for users by measuring the similarity of each user and micro-video pair.
+
+# A. Single-Modal Representation Learning Module
+
+Following the settings in MMGCN, we aim at performing the graph convolutional operations on the single-modal bipartite graph to learn the user preference in each modality (a.k.a. single-modal representation). However, we are inspired by the arguments that the feature transformation and nonlinear activation of common GCN have no positive impact on the effectiveness of collaborative filtering [9], and accordingly simplify the graph convolutional operations for the multimedia recommendation. Specifically, we discard the self-loop information propagation of each node and purely model its collaborative signal. Then, the feature transformation is also ignored to reduce the cost and facilitate the model optimization. Therefore, at the $( l + 1 )$ -th layer, the operation could be formulated as:
+
+As a result, the informative signals are encoded into the singlemodal user and micro-video representations. The same operations are adopted to the bipartite graph of each modality. After propagating on different modalities bipartite graphs, we gain the representations of the users and micro-videos in each modality.
+
+# B. Multi-Modal Representation Learning Module
+
+To inductively learn the particular multi-modal fusion pattern for each user, we disentangle the learning process into the information construction and aggregation operations.
+
+1) Multi-modal information construction: Inspired by previous methods on fusing multi-modal information [6], we also present several construction methods for the multi-modal information construction. At first, we initialize a parameter set $\{ \alpha _ { u , v } = 1 , \alpha _ { u , a } = 1 , \alpha _ { u , t } = 1 \}$ for each user, where $\alpha _ { u , v } , \alpha _ { u , a }$ and $\alpha _ { u , t }$ denote the user’s preference for visual, acoustic, and textual modalities, respectively.
+
+a) Attentively concatenation construction: An intuitive method to construct the multi-modal information is to concatenate each single-modal representation of a user as:
+
+$$
+\begin{array} { r l r } & { } & { \pmb { u } _ { m } ^ { ( l + 1 ) } = \displaystyle \sum _ { i \in \mathcal { N } _ { u } } \frac { 1 } { \sqrt { | \mathcal { N } _ { u } | } \sqrt { | \mathcal { N } _ { i } | } } \pmb { i } _ { m } ^ { ( l ) } , } \\ & { } & { \pmb { i } _ { m } ^ { ( l + 1 ) } = \displaystyle \sum _ { u \in \mathcal { N } _ { i } } \frac { 1 } { \sqrt { | \mathcal { N } _ { i } | } \sqrt { | \mathcal { N } _ { u } | } } \pmb { u } _ { m } ^ { ( l ) } , } \end{array}
+$$
+
+where $\mathcal { N } _ { u }$ and ${ \mathcal { N } } _ { i }$ represent the neighbors of $u$ and $i$ in the bipartite graph, respectively. In addition, $\pmb { u } _ { m } ^ { ( l ) } \in \mathbb { R } ^ { d }$ and $\pmb { i } _ { m } ^ { ( l ) } \in$ $\mathbb { R } ^ { d }$ denote the representations of user and micro-video learned from the previous layer in each modality, respectively. We use the symmetric normalization $\frac { 1 } { \sqrt { | \mathcal { N } _ { i } | } \sqrt { | \mathcal { N } _ { u } | } }$ to avoid the scale of representations increasing with graph convolution operations.
+
+By iteratively conducting the above operations, the users and micro-videos obtain their collaborative signal from each layer. After $L$ layers propagation, we combine them with the features of each node to form the desired single-modal representations of each user and micro-video, formally,
+
+$$
+{ \pmb u } _ { m } = \sum _ { l = 0 } ^ { L } { \pmb u } _ { m } ^ { ( l ) } , i _ { m } = \sum _ { l = 0 } ^ { L } { \pmb i } _ { m } ^ { ( l ) } .
+$$
+
+$$
+\begin{array} { r } { \left\{ \begin{array} { l l } { \pmb { h } _ { u } = \alpha _ { u , v } \pmb { u } _ { v } | | \alpha _ { u , a } \pmb { u } _ { a } | | \alpha _ { u , t } \pmb { u } _ { t } , } \\ { \pmb { u } _ { m u l } = \pmb { W } _ { m } \pmb { h } _ { u } + \pmb { b } _ { m } , } \end{array} \right. } \end{array}
+$$
+
+where $| |$ denotes the concatenation operation, $W _ { m } \in \mathbb { R } ^ { d \times 3 d }$ and $\pmb { b } _ { m } \in \mathbb { R } ^ { d }$ denote linear transformation matrix and bias, respectively. $u _ { m u l }$ denotes the constructed multi-modal representation of $u$ . In this way, each single-modal representation could be intactly considered in constructing the multi-modal information.
+
+b) Attentively sum construction: Inspired by the fact that the element-wise sum can preserve most features of the multimodal information [28], we could attentively integrate the single-modal preference of users as:
+
+$$
+{ \pmb u } _ { m u l } = \alpha _ { u , v } { \pmb u } _ { v } + \alpha _ { u , a } { \pmb u } _ { a } + \alpha _ { u , t } { \pmb u } _ { t } .
+$$
+
+c) Attentively maximum construction: For user’s single modal representations, we select the maximum value of each dimension as the user’s multi-modal preference representation. Such operation can be formally defined as:
+
+$$
+\begin{array} { r } { \pmb { u } _ { m u l } = m a x ( \alpha _ { u , v } \pmb { u } _ { v } , \alpha _ { u , a } \pmb { u } _ { a } , \alpha _ { u , t } \pmb { u } _ { t } ) . } \end{array}
+$$
+
+This operation is based on the assumption that the most prominent single-modal representation of each user carries the richest information for its multi-modal representation.
+
+2) Multi-modal information aggregation: Following the fact that users who have interacted with the same micro-videos are generally close to each other in the multi-modal preference. We argue that the personalized fusion pattern of each user is hidden in such user co-occurrence relationship.
+
+However, the co-occurrence times between a user and his/her co-occurrence users is not consistent. More specially, the user may have a large number of co-occurrence times with a small group of users, while most users only co-occur a few times with the user. Thus, we argue that only users with a certain number of co-occurrences have more similar multi-modal preferences. For this purpose, we propose a Top-K sampling strategy for the user co-occurrence graph construction as follows.
+
+Top- $K$ sampling strategy: First, we define the sampled graph as $\mathcal { G } _ { U } = \{ \mathcal { U } , \mathcal { A } \}$ , and $\mathcal { A } = \{ ( u , u ^ { \prime } ) | u , u ^ { \prime } \in \mathcal { U } \}$ reflects the node pairs between $u$ and $u ^ { \prime }$ . We sample the top- $K$ frequent users for each user from the user co-occurrence matrix $C$ , and an edge in graph $\mathcal { G } _ { U }$ could be defined as $q _ { u u ^ { \prime } }$ . If $q _ { u u ^ { \prime } } = 1$ , it indicates that $C _ { u , u ^ { \prime } }$ belongs to the top-K values of $\mathcal { C } _ { u }$ , otherwise $q _ { u u ^ { \prime } } \ne 1$ . We will discuss the effect of $K$ on the model performance in the experiment section.
+
+Thereafter, based on the sampled graph $\mathcal { G } _ { U }$ , we design two aggregation methods to derive each user’s fusion pattern in the user co-occurrence graph as follows.
+
+Mean aggregation: This method simply averages the representations of each user’s neighbor nodes as the aggregated information, and updates the user’s representation as:
+
+$$
+\pmb { u } _ { m u l } ^ { ( l ^ { \prime } + 1 ) } = \pmb { u } _ { m u l } ^ { ( l ^ { \prime } ) } + \sum _ { u ^ { \prime } \in \mathcal { N } _ { u , c } } \frac { 1 } { | \mathcal { N } _ { u , c } | } \pmb { u } _ { m u l } ^ { \prime ( l ^ { \prime } ) } ,
+$$
+
+where $l ^ { \prime }$ is the number of GCN layers, and $\mathcal { N } _ { u , c }$ denotes user u’s neighbor nodes in the user co-occurrence graph.
+
+Softmax weighted aggregation: In order to enhance the impact of neighbor users who have more co-occurrence times, we use the softmax function to compute each user’s aggregation weight:
+
+$$
+u _ { m u l } ( l ^ { \prime } + 1 ) = u _ { m u l } ( l ^ { \prime } ) + \sum _ { u ^ { \prime } \in \mathcal { N } _ { u , c } } \frac { \exp ( C _ { u , u ^ { \prime } } ) } { \sum _ { u ^ { \prime } \in \mathcal { N } _ { u , c } } \exp ( C _ { u , u ^ { \prime } } ) } u _ { m u l } ^ { \prime } ( l ^ { \prime } ) .
+$$
+
+After $L ^ { \prime }$ layers propagation, each user’s personalized fusion pattern could be mined from its neighbor nodes in the user cooccurrence graph. Noticing that we don’t design the symmetric multi-modal representation learning module for micro-videos, and the reasons can be summarized in the following two aspects. For one side, micro-videos’ features are more objective than the users’ preferences to characterize the instance. For another, the micro-videos’ fusion patterns are probably consistent with their exposure accessed by users. More specifically, since the micro-videos are collected from the same platform, we believe that they expose to users in a unified manner, which causes the micro-video’s same fusion pattern.
+- Hyperparameter definition: 
+- embedding_size: Controls the dimensionality of the user and micro-video representations, common values not specified.
+- n_layers: The number of graph convolution layers for both single-modal and multi-modal representation learning, typical values are not specified.
+- reg_weight: Regularization weight to prevent overfitting, typical values not specified.
+- cl_weight: Weight for contrastive loss, specific range not given.
+- dropout: Dropout rate to prevent overfitting, typical values not specified.
+- learning_rate: The rate at which the model parameters are updated, typical values are {0.1, 0.01, 0.001, 0.0001, 0.00001}.
+- K: The number of co-occurrence users for multi-modal information aggregation, values of K are set as 40 for Movielens and 50 for Tiktok.
+
+[Graph Context]
+[Related Methods 1]
+Model: BM3_2023
+Idea: BM3 is a self-supervised multi-modal recommendation model that simplifies existing self-supervised learning frameworks by removing the need for auxiliary graphs and negative samples. It achieves this by bootstrapping latent contrastive views using a simple dropout augmentation technique. The model jointly optimizes three objectives: reconstructing the user-item interaction graph, aligning multi-modal features under both inter- and intra-modality perspectives, and maximizing similarity across different views of the same item. This approach reduces computational cost and memory requirements while maintaining or improving recommendation accuracy.
+Relation:
+<COMPARISON_CONTEXT>
+Similarities:
+1. Both use LightGCN-style linear propagation to encode collaborative signals from the user–item interaction graph.
+2. Both project modality-specific item features with lightweight MLPs into a shared latent space to interact with ID embeddings.
+3. Both avoid heavy cross-modal encoders, relying on graph propagation plus simple projections for multimodal recommendation.
+
+Differences:
+1. Learning objective: BM3 is self-supervised and bootstrap-contrastive (no negatives) with stop-gradient and cosine losses (reconstruction, inter-modality alignment, intra-modality masking), whereas DualGNN uses supervised CF with negative sampling (e.g., BPR/pointwise) and no contrastive SSL.
+2. Graph modeling granularity: BM3 runs a single LightGCN on the standard user–item graph; DualGNN builds per-modality user–item bipartite graphs and an additional Top-K user–user co-occurrence graph for propagation.
+3. Fusion design: BM3 fuses implicitly by aligning each item's modality embeddings to its ID embedding in a shared space and treats users/items symmetrically in training; DualGNN learns explicit per-user modality weights (attentive concat/sum/max) and further aggregates on the user co-occurrence graph (no symmetric fusion for items).
+4. Augmentation and sparsity: BM3 generates contrastive views via latent dropout (no graph augmentations) and enforces an intra-modality masked loss; DualGNN uses no augmentation or masking.
+</COMPARISON_CONTEXT>
+
+[Related Methods 2]
+Model: MMGCN_2019
+Idea: MMGCN targets personalized micro-video recommendation where each item has visual, acoustic, and textual content. Existing multimedia recommenders usually fuse all modalities into a single item vector and then apply collaborative filtering, which ignores that users may have different preferences across modalities and that user representations can be improved by propagating content signals over the interaction graph. MMGCN instead builds a separate user–item bipartite graph for each modality and performs message passing on each graph to obtain modality-specific representations of users and micro-videos. An aggregation layer (mean or max pooling with linear transform and nonlinearity) collects neighbors’ features per modality, and a novel combination layer merges (1) structural neighborhood signals, (2) modality-specific intrinsic features, and (3) a shared ID embedding that ties modalities together in a coordinated latent space. Stacking these layers enables MMGCN to capture higher-order connectivity and cross-modal interactions. The final user and item embeddings are obtained by summing over modality-specific embeddings and are trained with a BPR ranking loss on sampled user–positive–negative triplets.
+Relation:
+<COMPARISON_CONTEXT>
+Similarities:
+1. Both build modality-specific user–item bipartite graphs and learn modal-specific user/item representations via message passing.
+2. Both use pooling-style neighborhood aggregation and stacked layers to encode higher-order collaborative signals.
+3. Both rely on pre-extracted visual/acoustic/text item features with trainable user representations per modality.
+4. Both fuse multi-modal representations to score user–item pairs by similarity for recommendation.
+
+Differences:
+1. MMGCN applies feature transformations and nonlinearities in both aggregation and combination layers and bridges modalities with a user-ID embedding, whereas DualGNN uses LightGCN-style propagation (no self-loop, no transform/activation) for single-modal graphs.
+2. MMGCN interleaves cross-modal combination within each layer and then sums modalities, while DualGNN first learns per-modality embeddings and then performs user-level multimodal fusion via attentive concat/sum/max with per-user weights.
+3. DualGNN adds a separate user–user co-occurrence graph (Top-K sampling with mean/softmax weighting) to learn personalized fusion patterns; MMGCN relies solely on modality-specific user–item graphs.
+4. MMGCN models and fuses modal-specific item representations symmetrically, whereas DualGNN omits an item-side multimodal fusion module, assuming items share a unified fusion pattern.
+</COMPARISON_CONTEXT>
+Example Python Code:
+<REFERENCE_CODE_ID="MMGCN_2019">
+# coding: utf-8
+"""
+MMGCN: Multi-modal Graph Convolution Network for Personalized Recommendation of Micro-video. 
+In ACM MM`19,
+"""
+
+import os
+import numpy as np
+import scipy.sparse as sp
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from torch_geometric.nn.conv import MessagePassing
+from torch_geometric.utils import remove_self_loops, add_self_loops, degree
+import torch_geometric
+
+from common.abstract_recommender import GeneralRecommender
+from common.loss import BPRLoss, EmbLoss
+from common.init import xavier_uniform_initialization
+
+
+class MMGCN(GeneralRecommender):
+    def __init__(self, config, dataset):
+        super(MMGCN, self).__init__(config, dataset)
+        self.num_user = self.n_users
+        self.num_item = self.n_items
+        num_user = self.n_users
+        num_item = self.n_items
+        dim_x = config['embedding_size']
+        num_layer = config['n_layers']
+        batch_size = config['train_batch_size']         # not used
+        self.aggr_mode = 'mean'
+        self.concate = 'False'
+        has_id = True
+        self.weight = torch.tensor([[1.0], [-1.0]]).to(self.device)
+        self.reg_weight = config['reg_weight']
+
+        # packing interaction in training into edge_index
+        train_interactions = dataset.inter_matrix(form='coo').astype(np.float32)
+        edge_index = torch.tensor(self.pack_edge_index(train_interactions), dtype=torch.long)
+        self.edge_index = edge_index.t().contiguous().to(self.device)
+        self.edge_index = torch.cat((self.edge_index, self.edge_index[[1, 0]]), dim=1)
+        self.num_modal = 0
+
+        if self.v_feat is not None:
+            self.v_gcn = GCN(self.edge_index, batch_size, num_user, num_item, self.v_feat.size(1), dim_x, self.aggr_mode,
+                             self.concate, num_layer=num_layer, has_id=has_id, dim_latent=256, device=self.device)
+            self.num_modal += 1
+
+        if self.t_feat is not None:
+            self.t_gcn = GCN(self.edge_index, batch_size, num_user, num_item, self.t_feat.size(1), dim_x,
+                             self.aggr_mode, self.concate, num_layer=num_layer, has_id=has_id, device=self.device)
+            self.num_modal += 1
+
+        self.id_embedding = nn.init.xavier_normal_(torch.rand((num_user+num_item, dim_x), requires_grad=True)).to(self.device)
+        self.result = nn.init.xavier_normal_(torch.rand((num_user + num_item, dim_x))).to(self.device)
+
+    def pack_edge_index(self, inter_mat):
+        rows = inter_mat.row
+        cols = inter_mat.col + self.n_users
+        # ndarray([598918, 2]) for ml-imdb
+        return np.column_stack((rows, cols))
+
+    def forward(self):
+        representation = None
+        if self.v_feat is not None:
+            representation = self.v_gcn(self.v_feat, self.id_embedding)
+        if self.t_feat is not None:
+            if representation is None:
+                representation = self.t_gcn(self.t_feat, self.id_embedding)
+            else:
+                representation += self.t_gcn(self.t_feat, self.id_embedding)
+
+        representation /= self.num_modal
+
+        self.result = representation
+        return representation
+
+    def calculate_loss(self, interaction):
+        batch_users = interaction[0]
+        pos_items = interaction[1] + self.n_users
+        neg_items = interaction[2] + self.n_users
+
+        user_tensor = batch_users.repeat_interleave(2)
+        stacked_items = torch.stack((pos_items, neg_items))
+        item_tensor = stacked_items.t().contiguous().view(-1)
+
+        out = self.forward()
+        user_score = out[user_tensor]
+        item_score = out[item_tensor]
+        score = torch.sum(user_score * item_score, dim=1).view(-1, 2)
+        loss = -torch.mean(torch.log(torch.sigmoid(torch.matmul(score, self.weight))))
+        reg_embedding_loss = (self.id_embedding[user_tensor]**2 + self.id_embedding[item_tensor]**2).mean()
+        if self.v_feat is not None:
+            reg_embedding_loss += (self.v_gcn.preference**2).mean()
+        reg_loss = self.reg_weight * reg_embedding_loss
+        return loss + reg_loss
+
+    def full_sort_predict(self, interaction):
+        user_tensor = self.result[:self.n_users]
+        item_tensor = self.result[self.n_users:]
+
+        temp_user_tensor = user_tensor[interaction[0], :]
+        score_matrix = torch.matmul(temp_user_tensor, item_tensor.t())
+        return score_matrix
+
+
+class GCN(torch.nn.Module):
+    def __init__(self, edge_index, batch_size, num_user, num_item, dim_feat, dim_id, aggr_mode, concate, num_layer,
+                 has_id, dim_latent=None, device='cpu'):
+        super(GCN, self).__init__()
+        self.batch_size = batch_size
+        self.num_user = num_user
+        self.num_item = num_item
+        self.dim_id = dim_id
+        self.dim_feat = dim_feat
+        self.dim_latent = dim_latent
+        self.edge_index = edge_index
+        self.aggr_mode = aggr_mode
+        self.concate = concate
+        self.num_layer = num_layer
+        self.has_id = has_id
+        self.device = device
+
+        if self.dim_latent:
+            self.preference = nn.init.xavier_normal_(torch.rand((num_user, self.dim_latent), requires_grad=True)).to(self.device)
+            #self.preference = nn.Parameter(nn.init.xavier_normal_(torch.rand((num_user, self.dim_latent))))
+
+            self.MLP = nn.Linear(self.dim_feat, self.dim_latent)
+            self.conv_embed_1 = BaseModel(self.dim_latent, self.dim_latent, aggr=self.aggr_mode)
+            nn.init.xavier_normal_(self.conv_embed_1.weight)
+            self.linear_layer1 = nn.Linear(self.dim_latent, self.dim_id)
+            nn.init.xavier_normal_(self.linear_layer1.weight)
+            self.g_layer1 = nn.Linear(self.dim_latent + self.dim_id, self.dim_id) if self.concate else nn.Linear(
+                self.dim_latent, self.dim_id)
+            nn.init.xavier_normal_(self.g_layer1.weight)
+
+        else:
+            self.preference = nn.init.xavier_normal_(torch.rand((num_user, self.dim_feat), requires_grad=True)).to(self.device)
+            #self.preference = nn.Parameter(nn.init.xavier_normal_(torch.rand((num_user, self.dim_feat))))
+
+            self.conv_embed_1 = BaseModel(self.dim_feat, self.dim_feat, aggr=self.aggr_mode)
+            nn.init.xavier_normal_(self.conv_embed_1.weight)
+            self.linear_layer1 = nn.Linear(self.dim_feat, self.dim_id)
+            nn.init.xavier_normal_(self.linear_layer1.weight)
+            self.g_layer1 = nn.Linear(self.dim_feat + self.dim_id, self.dim_id) if self.concate else nn.Linear(
+                self.dim_feat, self.dim_id)
+            nn.init.xavier_normal_(self.g_layer1.weight)
+
+        self.conv_embed_2 = BaseModel(self.dim_id, self.dim_id, aggr=self.aggr_mode)
+        nn.init.xavier_normal_(self.conv_embed_2.weight)
+        self.linear_layer2 = nn.Linear(self.dim_id, self.dim_id)
+        nn.init.xavier_normal_(self.linear_layer2.weight)
+        self.g_layer2 = nn.Linear(self.dim_id + self.dim_id, self.dim_id) if self.concate else nn.Linear(self.dim_id,
+                                                                                                         self.dim_id)
+
+        self.conv_embed_3 = BaseModel(self.dim_id, self.dim_id, aggr=self.aggr_mode)
+        nn.init.xavier_normal_(self.conv_embed_3.weight)
+        self.linear_layer3 = nn.Linear(self.dim_id, self.dim_id)
+        nn.init.xavier_normal_(self.linear_layer3.weight)
+        self.g_layer3 = nn.Linear(self.dim_id + self.dim_id, self.dim_id) if self.concate else nn.Linear(self.dim_id,
+                                                                                                         self.dim_id)
+
+    def forward(self, features, id_embedding):
+        temp_features = self.MLP(features) if self.dim_latent else features
+
+        x = torch.cat((self.preference, temp_features), dim=0)
+        x = F.normalize(x)
+
+        h = F.leaky_relu(self.conv_embed_1(x, self.edge_index))  # equation 1
+        x_hat = F.leaky_relu(self.linear_layer1(x)) + id_embedding if self.has_id else F.leaky_relu(
+            self.linear_layer1(x))  # equation 5
+        x = F.leaky_relu(self.g_layer1(torch.cat((h, x_hat), dim=1))) if self.concate else F.leaky_relu(
+            self.g_layer1(h) + x_hat)
+
+        h = F.leaky_relu(self.conv_embed_2(x, self.edge_index))  # equation 1
+        x_hat = F.leaky_relu(self.linear_layer2(x)) + id_embedding if self.has_id else F.leaky_relu(
+            self.linear_layer2(x))  # equation 5
+        x = F.leaky_relu(self.g_layer2(torch.cat((h, x_hat), dim=1))) if self.concate else F.leaky_relu(
+            self.g_layer2(h) + x_hat)
+
+        h = F.leaky_relu(self.conv_embed_3(x, self.edge_index))  # equation 1
+        x_hat = F.leaky_relu(self.linear_layer3(x)) + id_embedding if self.has_id else F.leaky_relu(
+            self.linear_layer3(x))  # equation 5
+        x = F.leaky_relu(self.g_layer3(torch.cat((h, x_hat), dim=1))) if self.concate else F.leaky_relu(
+            self.g_layer3(h) + x_hat)
+
+        return x
+
+
+class BaseModel(MessagePassing):
+    def __init__(self, in_channels, out_channels, normalize=True, bias=True, aggr='add', **kwargs):
+        super(BaseModel, self).__init__(aggr=aggr, **kwargs)
+        self.aggr = aggr
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.normalize = normalize
+        self.weight = nn.Parameter(torch.Tensor(self.in_channels, out_channels))
+
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        torch_geometric.nn.inits.uniform(self.in_channels, self.weight)
+
+    def forward(self, x, edge_index, size=None):
+        x = torch.matmul(x, self.weight)
+        return self.propagate(edge_index, size=(x.size(0), x.size(0)), x=x)
+
+    def message(self, x_j, edge_index, size):
+        return x_j
+
+    def update(self, aggr_out):
+        return aggr_out
+
+    def __repr(self):
+        return '{}({},{})'.format(self.__class__.__name__, self.in_channels, self.out_channels)
+</REFERENCE_CODE_ID>
+Example YAML Config:
+<REFERENCE_CONFIG_ID="MMGCN_2019">
+embedding_size: 64
+n_layers: 2
+reg_weight: [0, 0.00001, 0.0001, 0.001, 0.01, 0.1]
+learning_rate: [0.0001, 0.0005, 0.001, 0.005, 0.01]
+
+hyper_parameters: ["reg_weight", "learning_rate"]
+
+
+</REFERENCE_CONFIG_ID>
+
+[File Paths] (only these two files are allowed)
+- Model code: /data2/liyu/llh/rn/MMRec_2/src/models/dualgnn.py
+- Hyperparam config: /data2/liyu/llh/rn/MMRec_2/src/configs/model/DualGNN.yaml
+
+[Hyperparam Constraint]
+- Prefer fixed values; at most 3 hyperparameters for grid search. Keep the search space small.
+
+Steps (must use the ReAct toolchain):
+1) Do shape inference (inputs/outputs/modules) in natural language.
+2) Generate/update code and config; write via write/patch tools to the paths above.
+3) If system logs show errors, fix the root cause per the paper (do not suppress errors); then stop and wait for the next log.
+4) End with a brief summary of key changes, fidelity to the paper, and any remaining gaps.
+

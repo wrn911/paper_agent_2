@@ -1,0 +1,727 @@
+2025-12-16 20:15:41 - INFO - Worker starting with 1 nodes.
+2025-12-16 20:15:41 - INFO - Starting test task for 1 nodes.
+2025-12-16 20:15:41 - INFO - [DA-MRS] System prompt: 
+You are a paper-reproduction ReAct agent. Primary goal: faithfully implement the paper. Do not hide errors; use smoke-test feedback to fix root causes.
+
+[Tools & Permissions]
+- Only use the provided tools: read/write allowed files, apply patches to allowed files.
+- You may ONLY read/write the two specific files of the current paper: the model code file and the hyperparameter file. Everything else is forbidden.
+- You cannot execute shell commands yourself; the system will run the benchmark command and return the log.
+
+[Required Workflow]
+- Start with a mental shape/module check (inputs, outputs, losses, data flow).
+- Implement the paper as described; if the paper is ambiguous, state minimal assumptions inline as comments/config choices.
+- Write code + config to the given paths via tools (no raw code in replies).
+- Treat failing smoke tests as signals: inspect logs, fix the cause per paper intent, and re-write files. Do not wrap or silence errors to pass.
+- Avoid broad try/except; prefer explicit, narrow error handling only when the paper implies it.
+- Conclude with brief changes + whether tests (if any) were run/passed; note any remaining deviations from the paper.
+
+[Delivery Requirements]
+- Prioritize paper fidelity over “just running.” Keep hyperparameter search minimal and defaults reasonable.
+- Maintain device consistency; keep replies brief; no large code dumps in replies (write files instead).
+
+[Global Knowledge]
+- Use only generalizable tips from the knowledge base; ignore dataset-specific or misleading items unless explicitly applicable.
+- Current knowledge:
+## Generalizable
+
+- **Align early with the host framework’s contracts (config/dataset/trainer hooks)**  
+  Treat `config` as a framework object (often mapping-like, not a Python `dict`): prefer `key in config` and `config[key]`; don’t assume `.get()`. Implement expected lifecycle hooks (e.g., pre/post-epoch) as safe no-ops if unused. Keep method signatures harness-compatible (e.g., accept `(users, pos_items, neg_items)` if the trainer expects it).
+
+- **Use a small compatibility accessor for configs**  
+  Centralize config reads in a helper (e.g., `cfg(key, default=_MISSING)`) that supports mapping-style access and fails loudly for truly required keys.
+
+- **Don’t assume constructor inputs are raw datasets**  
+  `dataset` may be a wrapper/dataloader. Prefer framework-initialized attributes (`self.n_users`, `self.n_items`) or resolve through common wrapper paths (`obj.dataset`, etc.) with a prioritized lookup.
+
+- **Normalize data/interface variability at one boundary**  
+  Convert whichever interaction/graph representation you receive (sparse matrix, edge index, table/columns, callable provider) into one canonical internal format and use it everywhere else.
+
+- **Establish a “shape/field contract” up front**  
+  Validate and assert critical shapes/ID spaces early (user/item ID ranges, `[n_items, d]` modality matrices, embedding dims, graph adjacency shapes). This prevents silent broadcasting, mismatched fusion/projection dims, and hard-to-debug indexing errors.
+
+- **Fix root causes at the failing call site; don’t mask errors**  
+  Avoid broad `try/except` that hides interface mismatches or missing fields; fix the incompatible assumption (config access, dataset field names, interaction format) directly.
+
+- **Make the smallest explicit assumptions and document them**  
+  When paper/framework interfaces are ambiguous (feature keys, available modalities, required fields), state minimal assumptions in code/comments and keep them easy to change.
+
+- **Cache/precompute expensive artifacts carefully**  
+  Precompute and reuse fixed expensive structures (e.g., kNN graphs) when they are intended to be static; add explicit reset/refresh points for epoch-scoped caches to avoid staleness after parameter updates.
+
+- **Avoid caching autograd-tied tensors across optimization steps**  
+  Don’t reuse training-time tensors that carry computation graphs across steps (can trigger “backward through the graph a second time”). Recompute per batch, or cache only detached outputs meant for evaluation.
+
+- **Treat timeouts and “no space left” as runtime-budget/config issues first**  
+  Check and reduce multiplicative workload sources (epochs × sweeps × repeated eval/logging/preprocessing) before suspecting model bugs. Prefer small, explicit config changes (fewer epochs, disable sweeps) over code hacks.
+
+- **Keep hyperparameter search tiny and stability-focused**  
+  Limit sweeps to ~1–3 high-impact knobs (typically LR, regularization, dropout/corruption strength). Disable sweeps for smoke tests/CI and document how to restore full tuning.
+
+- **Gate expensive preprocessing behind config flags**  
+  Make heavy steps (e.g., item–item kNN building) optional and controllable via config for portability across datasets/environments.
+
+- **Keep multi-term objectives explicit and inspectable**  
+  Separate loss terms with explicit weights so stability/ablation/debugging is straightforward; ensure objective “mode switches” are internally consistent.
+
+## Pending/Specific
+
+- **Modality optionality and dataset field-name quirks (repo/dataset-specific)**  
+  Handling missing modalities is generally useful, but the exact feature keys/encodings (`v_feat`, `t_feat`, etc.) and storage location (dataset vs wrapper) vary widely—require per-repo adapters and explicit assertions/fallbacks.
+
+- **Graph construction details tied to particular papers/models**  
+  Model-specific requirements (e.g., particular normalization, self-loops, bipartite vs homogeneous adjacency, shallow “one-step” refinement graphs, frozen vs learned graphs) should stay paper-scoped.
+
+- **Top‑K neighbor choices and co-occurrence settings**  
+  Concrete K defaults (e.g., 10, 40–50) and stability claims are dataset/paper dependent; keep only the reminder to tune K and sparsification per dataset/budget.
+
+- **Paper-specific SSL/contrastive formulations**  
+  Details like “no negatives” vs “in-batch negatives,” “stop-gradient + predictor,” view generation via embedding dropout, and mode-specific heads/augmentations depend on the target paper; generalize only as “keep SSL implementation consistent with the stated objective.”
+
+- **Fusion operator implementation specifics**  
+  Notes like “concat needs projection; sum/max doesn’t” depend on the architecture/config; retain only as a caution to keep tensor dims and config consistent.
+
+- **“Disable unclear objectives by default”**  
+  Choosing defaults like `cl_weight=0` can be pragmatic for uncertain reproductions, but it’s an experimental policy decision rather than universal guidance.
+
+- **Scalability note: full similarity matrices for kNN**  
+  The warning is general, but the remedy (chunked kNN vs ANN libraries, exact tradeoffs) is implementation/dataset dependent; keep paper-specific prescriptions out of the main KB.
+
+- **Paper-scale training schedules vs CI-smoke settings**  
+  Statements like “~1000 epochs” being paper-default (MGCN/FREEDOM/etc.) are reproduction-specific; keep as documentation guidance for those papers rather than universal defaults.
+
+- **Anti-pattern reminders (retain as “don’t do this”)**  
+  - Assuming `config.get()` exists on framework configs.  
+  - Assuming `dataset` is always the raw dataset with `n_users/n_items`.  
+  - Hardcoding universal feature field names.  
+  - Masking errors with broad `try/except`.  
+  - Leaving sweeps enabled in smoke tests and then only lowering epochs.
+
+2025-12-16 20:15:41 - INFO - [DA-MRS] Attempt 1 user prompt: 
+Goal: Under restricted tools, reproduce the specified paper method. Generate the model code + hyperparameter file. Logs (if any) are for diagnosing root causes—do not suppress errors to make the run look successful.
+
+[Paper Node]
+- Title: DA-MRS_2024
+- Method name: DA-MRS
+- Core idea: DA-MRS addresses three key challenges in multi-modal recommendation: noisy multi-modal content, noisy user feedback, and insufficient alignment between multi-modal content and user feedback. It denoises multi-modal content by constructing item-item graphs based on consistent similarity across modalities, denoises user feedback by probabilistically associating observed feedback with multi-modal content to derive a denoised BPR loss, and aligns multi-modal content and user feedback through user preference-guided alignment for task-specific representations and graded item relations-guided alignment for finer-grained similarity capture.
+- Method description: 
+# 3 Methodology
+
+As shown in Figure 2, DA-MRS consists of three modules. Following structure-based methods [14, 34, 35], DA-MRS extracts item-item graphs from multi-modal content that reflect static semantic relations among items. Since the multi-modal content is noisy, we propose Denoising Item-item Graph (Section 3.2) to accurately capture item-item semantic relations and build multiple modalityspecific item-item semantic graphs. To further utilize dynamic behavior information, we build an item-item behavior graph. Then, the representations of users and items are derived from item-item graphs and the backbone CF model, and the user feedback is utilized as supervised signals to optimize the representations. Due to the noisy nature of user feedback, we propose Denoising User Feedback (Section 3.3) to eliminate the impact of erroneous feedback signals and derive the objective based on the well-known BPR loss. Finally, we align the multi-modal content and user feedback through two aligning methods (Section 3.4) guided by the user preference and the graded item relations.
+
+# 3.1 Preliminaries
+
+Let $\boldsymbol { \mathcal U }$ and $\boldsymbol { \mathcal { T } }$ denote the user and item sets. $| \mathcal { U } |$ and $| { \cal T } |$ denote the number of users and items, respectively. The user-item interaction matrix is $\mathbf { O } \in \mathbb { R } ^ { | \mathcal { U } | \times | \mathcal { I } | }$ , where $\mathbf { O } _ { u i } = 1$ suggests the user $u$ interacts (e.g., clicks, views, etc.) with item $i$ , otherwise $\mathbf { O } _ { u i } = 0$ . The content of each item ?? for each modality $\mathfrak { m } \in { \mathcal { M } }$ is pre-processed (e.g., by a pre-trained model), and the feature vector is denoted as $\mathbf { e } _ { i } ^ { \mathfrak { m } } \in \mathbb { R } ^ { d _ { \mathfrak { m } } }$ , where $d _ { \mathfrak { m } }$ is the embedding dimension, e.g., $\mathcal { M } = \{ \mathsf { v } , \mathsf { t } , \mathsf { a } \}$ for visual, textual, and acoustic modalities, respectively. Given O and $\mathbf { e } ^ { \mathfrak { m } }$ , ${ \mathfrak { m } } \in$ $M$ , the task of multi-modal recommender systems (MRSs) is to deliver a ranking list of possible recommendations that each user $u$ may prefer, according to the predicted user-item preference score $\widehat { y } _ { u i }$ .
+
+# 3.2 Denoising Item-item Graph
+
+Given the user feedback and the multi-modal content, existing structure-based methods [14, 34, 35] typically create item-item graphs by connecting each item to its top- $k$ most similar items in each modality. Their construction strategies have two problems. (1) Most studies [14, 34, 38] merge similar items in each modality into one item-item graph. If the similarity is mistakenly amplified based on noisy content, false positive links are introduced into the graph. For example, "carpet" and "painting" in Figure 1(b) can be falsely connected since their noisy visual attributes are similar. (2) They focus on semantic relations extracted from multi-modal content while neglecting behavior relations extracted from user feedback. Thus, they can not fully reveal the collaborative relations among items.
+
+To address these problems, instead of constructing one graph, we construct multiple item-item graphs, namely Item-item Semantic Graph (IIS-Graph) and Item-item Behavior Graph (IIB-Graph). Each IIS-Graph is constructed in one modality to distinguish modality specific semantic relations, and the construction is based on consistent similarity across modalities to avoid false positive links. The IIB-Graph is constructed from user feedback to represent cooccurrence behaviors. IIS-Graph and IIB-Graph are complementary, i.e., they mitigate the noise and sparsity problems of each other. By using them together, a more comprehensive item-item collaborative relationship can be established.
+
+3.2.1 Item-item Semantic Graph. We initialize a dense matrix $\mathsf { S } ^ { \mathsf { m } } , \mathsf { m } \in { \mathcal { M } }$ , where each element $\mathsf { S } _ { i , j } ^ { \mathsf { m } }$ measures the similarity between the two items ?? and $j$ in modality m. We employ cosine similarity as the similarity metric due to its parameter independence and lower computational complexity, i.e., $\mathbf { \widetilde { S } } _ { i , j } ^ { \mathtt { m } } = \big ( ( \mathbf { e } _ { i } ^ { \mathtt { m } } ) ^ { T } \mathbf { e } _ { j } ^ { \mathtt { m } } \big ) / \big ( \lVert \mathbf { e } _ { i } ^ { \mathtt { m } } \rVert \lVert \mathbf { e } _ { j } ^ { \mathtt { m } } \rVert \big )$ .
+
+To prune false positive links, we first discard entries with smaller similarities in the dense matrix $\mathtt { S } ^ { \mathtt { m } }$ . This step avoids the impact of amplified similarity in certain modalities. For example, in Ecommerce platforms, since most retailers use verbose descriptions, the textual similarities tend to be higher than visual similarities. Specifically, let $\overline { { \mathbf { S } ^ { \mathfrak { m } } } } = \bigl ( \sum _ { i } \sum _ { j } \mathbf { S } _ { i , j } ^ { \mathfrak { m } } \bigr ) / \bigl ( | \mathcal { I } | ^ { 2 } \bigr )$ represents the average similarity in modality $\mathsf { m }$ , if $\mathsf { S } _ { i , j } ^ { \mathtt { m } } \ < \ \overline { { \mathsf { S } ^ { \mathtt { m } } } }$ , we set $\mathsf { S } _ { i , j } ^ { \mathsf { m } } = 0$ . Then, we discard entries that exhibit inconsistency across modalities. This step prevents semantic relations from being mistakenly added due to noisy content. For example, if two irrelevant items are assigned identical pictures due to a system error, they may be similar in visual modality but dissimilar in textual modality. Specifically, entries with small similarities in other modalities are deleted, i.e., $\mathsf { S } _ { i , j } ^ { \mathsf { m } } = 0$ if $\exists \mathrm { m } ^ { \prime } , \boldsymbol { \mathrm { \sf { S } } } _ { i , j } ^ { \mathrm { m ^ { \prime } } } = 0 .$
+
+Next, we use the $k$ -Nearest Neighbors method to construct the IIS-Graph’s adjacency matrix $\mathbf { A } ^ { \mathfrak { m } }$ . For each item $i \in \mathcal { I }$ , we retrieve the top $K$ items with the highest similarity and generate a list of elements called top- $\mathbf { \cdot k } ( \mathbf { S } _ { i , : } ^ { \mathfrak { m } } )$ . To enhance computational efficiency, we set the non-zero elements in top- $\operatorname { k } ( \mathbb { S } _ { i , : } ^ { \mathfrak { m } } )$ to 1. The adjacency matrix of the IIS-Graph $\mathbf { G } ^ { \mathfrak { m } }$ is defined as
+
+$$
+\begin{array} { r } { \mathbf { A } _ { i , j } ^ { \mathtt { m } } = \left\{ \begin{array} { l l } { 1 , } & { \mathbf { S } _ { i , j } ^ { \mathtt { m } } \in \mathrm { t o p - k } ( \mathbf { S } _ { i , : } ^ { \mathtt { m } } ) \& \mathbf { S } _ { i , j } ^ { \mathtt { m } } > 0 , } \\ { 0 , } & { \mathrm { o t h e r w i s e } . } \end{array} \right. } \end{array}
+$$
+
+3.2.2 Item-item Behavior Graph. We initialize an item-item cooccurrence matrix $\mathsf { S } ^ { \mathsf { c } }$ , where each element ${ \tt S } _ { i , j } ^ { \tt c }$ records the frequency of two items $i$ and $j$ clicked by a same user. The idea is that if two items appear together in the user’s clicked lists, they are likely to be semantically relevant. Then, we prune infrequent elements, i.e., $\mathsf { S } _ { i , j } ^ { \mathsf { c } } \ < \ \xi _ { B }$ , where $\xi _ { B }$ is the pruning threshold. The pruning step avoids the impact of random behaviors, e.g., co-occurrence caused by the user randomly clicking an item. Next, we employ the $k$ -Nearest Neighbors method to process the matrix. For each item $i \in \mathcal { I }$ , we retrieve the top $K$ items with the highest similarity and generate top- $\mathbf { \cdot k } ( \mathbf { S } _ { i , : } ^ { \mathsf { c } } )$ . The adjacency matrix of Item-item Behavior Graph $\mathbf { G } ^ { \mathsf { c } }$ is defined as
+
+$$
+\begin{array} { r } { \mathbf { A } _ { i , j } ^ { \mathrm { c } } = \left\{ \begin{array} { l l } { \mathrm { S } _ { i , j } ^ { \mathrm { c } } , \quad \mathrm { S } _ { i , j } ^ { \mathrm { c } } \in \mathrm { t o p - k } ( \mathrm { S } _ { i , : } ^ { \mathrm { c } } ) \ \& \ i \neq j \ \& \ \mathrm { S } _ { i , j } ^ { \mathrm { c } } \geq \xi _ { B } , } \\ { 1 , \quad i = j , } \\ { 0 , \quad \mathrm { o t h e r w i s e } . } \end{array} \right. } \end{array}
+$$
+
+3.2.3 User and Item Representation. We can treat the co-occurrence as another modality and add IIB-Graph to the modality-specific item-item graphs, i.e., $M = M \cup \{ { \mathsf { c } } \}$ . We perform graph convolutions on each item-item graph. Among the various graph convolution methods, we select LightGCN [10] as the convolution kernel for message propagation and aggregation because of its simplicity in computation and widespread adoption. We stack $l$ layers and obtain the last layer’s representations as the embeddings for each modality, i.e., $\mathbf { h } _ { i } ^ { \mathsf { v } }$ , ${ \bf h } _ { i } ^ { \mathrm { t } }$ and $\mathbf { h } _ { i } ^ { \mathsf { c } }$ are item representations learned on IIS-Graph $\mathbf { G } ^ { \mathsf { v } }$ , IIS-Graph $\mathbf { G } ^ { \mathrm { t } }$ and IIB-Graph $\mathbf { G } ^ { \mathtt { C } }$ , respectively.
+
+Following other structure-based methods [14, 34, 35], DA-MRS can plug in various collaborative filtering (CF) methods that model user-item interactions. We feed the user ID embeddings, item ID embeddings, and user observed feedback O to the backbone CF method and obtain the user embeddings $\mathbf { u } _ { u }$ for user $u$ and item embeddings $\mathbf { h } _ { i } ^ { \mathrm { i d } }$ for item ??. Note that the user representation is obtained solely by the backbone CF method. We use the item embeddings learned from IIS-Graph, IIB-Graph, and the backbone CF method to obtain the item representation:
+
+$$
+\mathbf { t } _ { i } = \mathrm { M e a n p o o l i n g } \big ( \mathbf { h } _ { i } ^ { \mathrm { i d } } , \mathrm { M e a n p o o l i n g } ( \mathbf { h } _ { i } ^ { \mathrm { v } } , \mathbf { h } _ { i } ^ { \mathrm { t } } , \mathbf { h } _ { i } ^ { \mathrm { c } } ) \big ) .
+$$
+
+# 3.3 Denoising User Feedback
+
+After obtaining the user embeddings $\mathbf { u }$ and item embeddings t, conventional RSs usually use Bayesian Personalized Ranking [17] (BPR) loss. Let $y$ denotes the true user behavior; the probability a user $u$ prefers item ?? over item $j$ (i.e., $y _ { u i } > y _ { u j }$ ) is determined by the model parameters $\Theta$ .
+
+$$
+\begin{array} { r } { p ( y _ { u i } > y _ { u j } | \Theta ) = \sigma ( \widehat { y } _ { u i } - \widehat { y } _ { u j } ) , } \end{array}
+$$
+
+where $\widehat { y } _ { u i }$ is the predicted user-item preference score. It is combmonly defined as $\bar { \widehat { y } } _ { u i } = \mathbf { u } _ { u } ^ { \textit { T } } \mathbf { t } _ { i }$ , where the user and item representations are part of the model parameters $\mathbf { u } \in \Theta , \mathbf { t } \in \Theta , \sigma ( )$ represents the sigmoid function.
+
+A training set $\mathcal { D } = \{ \langle u , i , j \rangle \}$ is constructed from the observations $\mathbf { O }$ [17]. Each triple in the training set $\langle u , i , j \rangle$ contains a positive observation $\mathbf { O } _ { u i } = 1$ , and a randomly sampled negative observation $\mathbf { O } _ { u j } = 0$ . The BPR loss assumes a triple $\langle u , i , j \rangle$ implies $y _ { u i } > y _ { u j }$ . The model parameters are optimized via the BPR loss:
+
+$$
+\begin{array} { r l } & { \mathcal { L } _ { B P R } = l n \big ( \boldsymbol { \rho } ( \boldsymbol { \Theta } | \mathcal { D } ) \big ) } \\ & { \qquad \propto l n \big ( \boldsymbol { \rho } ( \mathcal { D } | \boldsymbol { \Theta } ) \times \boldsymbol { \mathcal { p } } ( \boldsymbol { \Theta } ) \big ) } \\ & { \qquad = \displaystyle \sum _ { \langle u , i , j \rangle \in \mathcal { D } } l n \big ( \boldsymbol { \rho } ( y _ { u i } > y _ { u j } | \boldsymbol { \Theta } ) \big ) + \lambda _ { \boldsymbol { \Theta } } | | \boldsymbol { \Theta } | | ^ { 2 } , } \end{array}
+$$
+
+where $\lambda _ { \Theta }$ is the regularization coefficient.
+
+However, due to the presence of noisy feedback [3, 13, 29, 30], the observation triple $\langle u , i , j \rangle$ is not equivalent to true user behavior $y _ { u i } ~ > ~ y _ { u j }$ . Our basic idea is to treat the observation triple as a random variable, and the probability of the observation triple is conditioned on the true user behavior. Inspired by the BPR loss [17], we assume the true user behavior is a ranked list, and the pair-wise rank is either $y _ { u i } > y _ { u j }$ or $y _ { u i } < y _ { u j }$ 1 .
+
+When the true user behavior $y _ { u i } > y _ { u j }$ , we assume that the observation triple is drawn from a Bernoulli distribution2 parameterized by $f ( u , i )$ , i.e., $\begin{array} { r } { p \big ( \langle u , i , j \rangle \in \mathcal { D } | y _ { u i } > y _ { u j } , \Theta \big ) = B e r n o u l l i ( f ( u , i ) ) . } \end{array}$ . If the observation is correct and reliable, then $f ( u , i ) = 1$ . In other words, the value of $f ( u , i )$ measures the reliability of the observation $\langle u , i , j \rangle \in \mathcal { D }$ . Intuitively, since users respond to their preferred multi-modal content, e.g., a fashion-goer prefers trending elements in the displayed image, we can use the estimated preference score on multi-modal content to define $f ( u , i )$ . That is, the stronger a user is attracted to the item’s multi-modal content, the more reliable the observation triple is. Furthermore, the more consistent the user is attracted across different modalities, the more possible the triple can be observed. Specifically, we estimate the user-item preference score on each modality and calculate the mean and variance across different modalities.
+
+$$
+\begin{array} { r l r } & { } & { \boldsymbol { f } ( u , i ) = ( \mu _ { u i } ) ^ { \alpha } \times ( e ^ { - s _ { u i } ^ { 2 } } ) ^ { \beta } , ~ } \\ & { } & { \mu _ { u i } = \frac { \sum _ { \mathfrak { m } \in \mathcal { M } } \sigma \left( \widehat { y } _ { u i } ^ { \mathfrak { m } } \right) } { \left| \mathcal { M } \right| } , ~ s _ { u i } ^ { 2 } = \frac { \sum _ { \mathfrak { m } \in \mathcal { M } } \left( \mu _ { u i } - \sigma ( \widehat { y } _ { u i } ^ { \mathfrak { m } } ) \right) ^ { 2 } } { \left| \mathcal { M } \right| } , } \\ & { } & { \widehat { y } _ { u i } ^ { \mathfrak { m } } = ( \mathbf { u } _ { u } ) ^ { T } \mathbf { h } _ { i } ^ { \mathfrak { m } } , ~ } \end{array}
+$$
+
+where $\mu _ { u i }$ denotes the average estimated preference score of user $u$ on item $i$ across all modalities. We employ the sigmoid function $\sigma ( )$ to ensure that $\mu \in ( 0 , 1 ) . s _ { u i } ^ { 2 }$ denotes the variance of the estimated preference scores of user $u$ for item $i$ across all modalities. Since $s _ { u i } ^ { 2 } > 0 , e ^ { - s _ { u i } ^ { 2 } } \in ( 0 , 1 ) . \alpha , \beta > 0$ are two hyper-parameters. Therefore, the function $f ( u , i ) \in ( 0 , 1 )$ ensures a Bernoulli probability. In Equation 6, the more the user prefers the multi-modal content (i.e., larger $\mu _ { u i }$ ) and the more consistent the user preference is across modalities (i.e., smaller $s _ { u i } ^ { 2 } )$ , the more reliable the observation triple is (i.e., larger $f ( u , i ) )$ .
+
+If the true user behavior $y _ { u i } < y _ { u j }$ , we define another Bernoulli distribution $\begin{array} { r } { p \big ( \langle u , i , j \rangle \in \mathcal { D } | y _ { u i } < y _ { u j } , \Theta \big ) = B e r n o u l l i ( g ( u , i ) ) } \end{array}$ to be parameterized by $g ( u , i )$ . The value of $g ( u , i )$ quantifies the probability of incidents that the observation contradicts the user’s true behavior. Intuitively, one possible cause of such incidents is when a user is influenced by a certain modality of an item and interacts with it. For example, a user is attracted by an item’s high-quality product image and clicks it, although afterward, he finds the item is not what he seeks. Another possible cause is when there are no comparable products on the market. For example, a user does not like the item, but since there is no substitute, he clicks it and attempts to evaluate it with an open mind. To model such phenomena, we can define $g ( u , i )$ based on the maximal estimated preference score on the target item ?? in any single modality and the estimated preference score on competitors.
+
+$$
+\begin{array} { c } { \displaystyle g ( u , i ) = \left. \sigma \big ( \mathrm { m a x } _ { \mathrm { m } } \big ( \widehat { y } _ { u i } ^ { \mathrm { m } } \big ) - \widehat { y } _ { n } \big ) ^ { \gamma } , \quad \widehat { y } _ { n } > \mu _ { u i } , \right. } \\ { \displaystyle 0 , \quad \mathrm { o t h e r w i s e } , } \\ { \displaystyle \widehat { \overline { { y } } _ { n } } = \frac { \sum _ { \langle u , j \rangle \in \mathcal { B } } \sigma ( \widehat { y } _ { u j } ) } { | \mathcal { B } | } , } \end{array}
+$$
+
+where $\operatorname* { m a x } _ { \mathfrak { m } } ( \widehat { y } _ { u i } ^ { \mathfrak { m } } )$ represents the maximal estimated preference score of user $u$ on item $i$ in any modality. $\overline { { \widehat { y } _ { n } } }$ represents the average user preference score of negative samples within the mini-batch $\mathcal { B }$ $\gamma > 0$ is a hyper-parameter. We employ the sigmoid function $\sigma ( )$ to ensure $g ( u , i ) \in ( 0 , 1 )$ . Thus, when the user does not like the item (i.e., $\overline { { \widehat { y _ { n } } } } > \mu _ { u i } )$ , the more the user is attracted by a certain modality (i.e., larger $\operatorname* { m a x } ( \widehat { y } _ { u i } ^ { \mathfrak { m } } ) )$ and the less the user prefers other products (i.e., smaller $\overline { { { \widehat { y } } _ { n } } } .$ ), the more possible the observation triple appears (i.e., larger $g ( u , i ) )$ .
+
+Based on the above reasoning, we derive the objective for denoised user feedback $\mathsf { a s } ^ { 3 }$ ,
+
+$$
+\begin{array} { r l r } { \mathcal { L } _ { D \cdot B P R } = \displaystyle \sum _ { \langle u , i , j \rangle \in \mathcal { D } } l n \bigg ( f ( u , i ) \sigma \big ( \mathbf { u } _ { u } ^ { \textit { T } } ( \mathbf { t } _ { i } - \mathbf { t } _ { j } ) \big ) + g ( u , i ) \Big ( 1 - \sigma \big ( \mathbf { u } _ { u } ^ { \textit { T } } ( \mathbf { t } _ { i } - \mathbf { t } _ { j } ) \big ) \Big ) \bigg ) } & { } & \\ { + \lambda _ { \Theta } | | \Theta | | ^ { 2 } . } & { } & { { \mathrm { ( 8 ) } } } \end{array}
+$$
+
+# 3.4 Aligning Multi-modal Content and User Feedback
+
+Alignment between multi-modal content and user feedback is underexplored in current MRSs. The recommendation performance is damaged because the embeddings learned from multi-modal content and user feedback usually reside in different regions of the feature space. To better integrate multi-modal content and user feedback, we align them. The recommender system consists of items and users. Naturally, our alignment is split into two parts.
+
+3.4.1 Alignment guided by user perference. The item-level alignment can be seen as instance-level alignment on parallel corpora in traditional multi-modal systems. We believe that only instancelevel alignment is insufficient in MRSs because the goal of recommender systems is essentially to predict user preference instead of understanding multi-modal content. Our motivation is to use the user preference to orient multi-modal content. For example, if a user prefers a pen over a pencil, then the estimated preference from multi-modal content for the pen should be larger than the estimated preference for the pencil.
+
+Specifically, we extract distinct users from the mini-batch $\mathcal { B }$ and form $\mathcal { B } _ { \mathrm { u } }$ . For each user $u \in \mathcal { B } _ { \mathsf { U } }$ , we compute preference scores on multi-modal content with respect to all $i \in \mathcal { I }$ by $\widehat { y } _ { u i } ^ { \mathrm { m m } } = ( \mathbf { u } _ { u } ) ^ { T } \mathbf { h } _ { i } ^ { \mathrm { m m } }$ where $\mathbf { h } ^ { \mathsf { m m } } = \mathrm { M e a n P o o l i n g } ( \mathbf { h } ^ { \mathsf { v } } , \mathbf { h } ^ { \mathsf { t } } , \mathbf { h } ^ { \mathsf { c } } )$ . Then, we compute the preference distribution of the user $u$ over items based on multi-modal content,
+
+$$
+P _ { u } ^ { \mathfrak { m } \mathfrak { m } } = \mathrm { s o f t m a x } ( [ \widehat { y } _ { u 1 } ^ { \mathfrak { m } \mathfrak { m } } , . . . , \widehat { y } _ { u | \mathcal { I } | } ^ { \mathfrak { m } \mathfrak { m } } ] ) ,
+$$
+
+where $| { \cal T } |$ represents the number of items, softmax() represents the softmax function.
+
+Similarly, we can compute the preference distribution $P _ { u } ^ { \mathrm { i d } }$ of $u$ over the itemset based on user feedback by $\widehat { y } _ { u i } ^ { \mathrm { i d } } = ( \mathbf { u } _ { u } ) ^ { T } \mathbf { h } _ { i } ^ { \mathrm { i d } }$ . $\mathcal { L } _ { A U }$ aligns the two preference distributions,
+
+$$
+\mathcal { L } _ { A U } = \sum _ { u \in \mathcal { B } _ { \mathsf { u } } } K L [ P _ { u } ^ { \mathsf { m m } } | | P _ { u } ^ { \mathrm { i d } } ] + K L [ P _ { u } ^ { \mathrm { i d } } | | P _ { u } ^ { \mathsf { m m } } ] ,
+$$
+
+where $K L [ ]$ represents the KL divergence.
+
+3.4.2 Alignment guided by item graded relations. Contrastive learning is an efficient alignment method that aligns the positive samples and makes the negative samples more distinguishable. In defining positive and negative samples, current MRSs [35, 39] simplify the multi-modal relation as a binary relation, which is sub-optimal. (1) Considering similar items within a single modality as positive samples can result in false positives, impeding item representation learning. (2) Treating dissimilar items within a single modality as negative samples may overlook some potentially useful samples.
+
+We believe the relations extracted from multi-modal content are graded in nature, i.e., items can be similar in multiple modalities, similar in a single modality, and dissimilar. Exploiting the graded relation is beneficial for finer-grained alignment. For example, when a user wants to purchase a jacket with a similar style to a previously bought shirt, similar shirts (visually similar to the jacket but textually dissimilar) and similar jackets (visually and textually similar) can improve our understanding of the preferred jackets.
+
+To represent the similarity grades, we construct two types of positive samples for each modality, i.e., multi-modal similar items and single-modal similar items. Note that the multi-modal similar items and single-modal similar items differ in each modality m. For each modality m, we first compute a similarity matrix, $\mathbf { T } _ { i , j } ^ { \mathfrak { m } } =$ $\left( ( \mathbf { h } _ { i } ^ { \mathsf { m } } ) ^ { T } \mathbf { h } _ { j } ^ { \mathsf { m } } \right) / \left( \| \mathbf { h } _ { i } ^ { \mathsf { m } } \| \| \mathbf { h } _ { j } ^ { \mathsf { m } } \| \right)$ . Then, for each item $i \in \mathcal { I }$ , we use the softmax function softmax() to normalize the similarity scores, i.e., $\widetilde { \mathbf { T } } _ { i , : } ^ { \mathfrak { m } } = \operatorname { s o f t m a x } ( \mathbf { T } _ { i , : } ^ { \mathfrak { m } } )$ . Next, we modify the modal-aware multi-modal similarity by adding the aggregated multi-modal similarity, ${ \bf R } _ { i , : } ^ { \mathfrak { m } } =$ $\begin{array} { r } { \widetilde { \mathbf { T } } _ { i , : } ^ { \mathfrak { m } } + \sum _ { \mathfrak { m } } \widetilde { \mathbf { T } } _ { i , : } ^ { \mathfrak { m } } } \end{array}$ , i.e., incorporating the multi-modal similarity while highlighting the current modality. Thus, the multi-modal similar items are defined as the top $k$ similar items with largest $\mathbf { R } _ { i , : } ^ { \mathfrak { m } }$ , denoted as $\mathcal { R } _ { i } ^ { \mathfrak { m } }$ . To obtain single-modal similar items, we first remove the items in $\mathcal { R } _ { i } ^ { \mathfrak { m } }$ , i.e, $\widetilde { \mathbf { T } } _ { i , j } ^ { \mathfrak { m } } = 0 , \forall j \in \mathcal { R } _ { i } ^ { \mathfrak { m } }$ . Then we retrieve top $k$ similar items with largest $\widetilde { \mathbf { T } } _ { i , j } ^ { \mathfrak { m } }$ , and build the single-modal similar itemset $\mathcal { T } _ { i } ^ { \mathfrak { m } }$ . Consequently, we construct the dissimilar itemset ${ \cal N } _ { i } ^ { \mathfrak { m } }$ . For each $j \in \mathcal { T } _ { i } ^ { \mathfrak { m } }$ , we set $\widetilde { \mathbf { T } } _ { i , j } ^ { \mathfrak { m } } = 0$ . Then, the dissimilar itemset contains item in mini-batch $\mathcal { B }$ , i.e., $N _ { i } ^ { \mathfrak { m } } = \{ j | j \in \mathcal { B } \& \mathbf { T } _ { i , j } ^ { \mathfrak { m } } > 0 \}$ .
+
+We believe multi-modal similar items should be closer in the representation space than single-modal similar items, and single-modal similar items should be closer than dissimilar items. Accordingly, we propose the contrastive learning loss,
+
+$$
+\mathcal { L } _ { A I - M M } = \sum _ { \mathfrak { m } } - l o g \frac { \sum _ { j \in \mathcal { R } _ { i } ^ { \mathfrak { m } } } \varphi ( \mathbf { h } _ { i } ^ { \mathfrak { m } } , \mathbf { h } _ { j } ^ { \mathfrak { m } } ) } { \sum _ { j \in \mathcal { R } _ { i } ^ { \mathfrak { m } } } \varphi ( \mathbf { h } _ { i } ^ { \mathfrak { m } } , \mathbf { h } _ { j } ^ { \mathfrak { m } } ) + \sum _ { k \in \mathcal { T } _ { i } ^ { \mathfrak { m } } } \varphi ( \mathbf { h } _ { i } ^ { \mathfrak { m } } , \mathbf { h } _ { k } ^ { \mathfrak { m } } ) + \sum _ { l \in \mathcal { N } _ { i } ^ { \mathfrak { m } } } \varphi ( \mathbf { h } _ { i } ^ { \mathfrak { m } } , \mathbf { h } _ { l } ^ { \mathfrak { m } } ) } ,
+$$
+
+Table 1: Statistics of the datasets. $| \mathcal { D } |$ , $| \mathcal { U } |$ , $| { \cal T } |$ represents the number of observations, users, and items. $\overline { { \mathsf { S } ^ { \vee } } }$ , $\overline { { \mathsf { S } ^ { \mathrm { t } } } }$ and $\overline { { \mathsf { S } ^ { \mathsf { a } } } }$ represents the average visual, textual and acoustic similarity.   
+
+<table><tr><td>Datasets</td><td>|D</td><td>u</td><td></td><td>Sparsity</td><td>sv</td><td>st</td><td>sa</td></tr><tr><td>Baby</td><td>160,792</td><td>19,445</td><td>7,050</td><td>0.9988</td><td>0.2240</td><td>0.2627</td><td>-</td></tr><tr><td>Sports</td><td>296,337</td><td>35,598</td><td>18,357</td><td>0.9995</td><td>0.2085</td><td>0.2184</td><td>-</td></tr><tr><td>Clothing</td><td>278,677</td><td>39,387</td><td>23.033</td><td>0.9997</td><td>0.2239</td><td>0.3880</td><td>-</td></tr><tr><td>TikTok</td><td>68,722</td><td>9,308</td><td>6,710</td><td>0.9989</td><td>0.8556</td><td>0.7113</td><td>0.1245</td></tr></table>
+
+$$
+\mathcal { L } _ { A I - S } = \sum _ { \mathfrak { m } } - l o g \frac { \sum _ { k \in \mathcal { T } _ { i } ^ { \mathfrak { m } } } \varphi ( \mathbf { h } _ { i } ^ { \mathfrak { m } } , \mathbf { h } _ { k } ^ { \mathfrak { m } } ) } { \sum _ { k \in \mathcal { T } _ { i } ^ { \mathfrak { m } } } \varphi ( \mathbf { h } _ { i } ^ { \mathfrak { m } } , \mathbf { h } _ { k } ^ { \mathfrak { m } } ) + \sum _ { l \in { \cal N } _ { i } ^ { \mathfrak { m } } } \varphi ( \mathbf { h } _ { i } ^ { \mathfrak { m } } , \mathbf { h } _ { l } ^ { \mathfrak { m } } ) } ,
+$$
+
+where $\varphi ( \mathbf { h } _ { i } ^ { \mathfrak { m } } , \mathbf { h } _ { j } ^ { \mathfrak { m } } ) = e x p \big ( s i m ( \mathbf { h } _ { i } ^ { \mathfrak { m } } , \mathbf { h } _ { j } ^ { \mathfrak { m } } ) / \tau \big )$ , $\tau$ is the temperature, $s i m ( )$ is the cosine similarity.
+
+The final loss consists of the denoised BPR loss, the aligning user preference loss, and the aligning graded item relations loss.
+
+$$
+\mathcal { L } = \mathcal { L } _ { D - B P R } + \lambda _ { 1 } \mathcal { L } _ { A U } + \lambda _ { 2 } ( \mathcal { L } _ { A I - M M } + \mathcal { L } _ { A I - S } ) ,
+$$
+
+where $\lambda _ { 1 } , \lambda _ { 2 }$ are two hyper-parameters.
+- Hyperparameter definition: 
+- k: Number of neighbors in k-NN for graph construction. Typical value: 10.
+- ξ_B: Pruning threshold for Item-item Behavior Graph. Typical value: 2.
+- α: Exponent for mean preference in f(u,i) function. Typical values: 1.5 (Baby, Clothing) or 3 (Sports).
+- β: Exponent for variance in f(u,i) function. Typical values: 1.5 (Baby, Clothing) or 3 (Sports).
+- γ: Exponent in g(u,i) function. Tuned amongst {2.0, 1.0}.
+- λ_1: Weight for alignment loss L_AU. Tuned amongst {10, 1, 0.1, 0.01}.
+- λ_2: Weight for alignment loss L_AI. Tuned amongst {1, 0.1, 0.01, 1e-3, 1e-4}.
+- learning_rate: Learning rate for optimizer. Tuned amongst {1e-4, 1e-3, 1e-2}.
+
+[Graph Context]
+[Related Methods 1]
+Model: LATTICE_2021
+Idea: LATTICE targets multimedia recommendation where items have visual and textual content, and existing multimodal models mostly treat these features as side information on user–item graphs while leaving item–item relations implicit. This leads to a gap between collaborative co-occurrence relations and genuine semantic similarities among items. LATTICE proposes to mine latent item–item structures directly from multimodal features and to inject these structures into collaborative filtering (CF) models. Concretely, for each modality it builds an initial k-NN item graph via cosine similarity over raw features, then learns a refined latent graph from transformed high-level features and combines it with the initial graph via a skip connection. The modality-specific latent graphs are fused with learnable modality weights into a single multimodal item graph. Graph convolution layers are then applied over this latent item graph, but only on item ID embeddings (not on raw features), to encode high-order item–item affinities. The resulting item representations are L2-normalized and added as a residual to the base CF item embeddings (e.g., LightGCN, NGCF, MF), yielding a plug-and-play module that improves both warm-start and cold-start recommendation performance by explicitly modeling semantic item–item relationships from multimodal content.
+Relation:
+<COMPARISON_CONTEXT>
+Similarities:
+1. Both mine modality-aware item–item graphs from multimodal features using cosine similarity with k-NN sparsification, then inject graph structure via LightGCN-style propagation.
+2. Both act as plug-and-play modules that enhance item embeddings and pair with a CF backbone to compute user–item scores optimized by pairwise BPR with sampled negatives.
+3. Both start from pre-extracted visual/textual features and treat graphs as side information over item IDs rather than modeling users on the graph.
+
+Differences:
+1. Learning objectives: DA-MRS replaces vanilla BPR with a denoised BPR (reliability f(u,i) and contradiction g(u,i)) and adds two alignment losses (user-preference KL and graded contrastive); LATTICE trains only with standard BPR.
+2. Graph construction/denoising: DA-MRS builds multiple graphs (one per modality plus a behavior co-occurrence graph) and prunes edges by modality-specific thresholds and cross-modal consistency; LATTICE learns latent structures by transforming features (W_m e) and mixing initial and learned adjacencies via a skip connection without behavior graphs.
+3. Modality fusion/representation: DA-MRS runs per-graph convolutions to get modality-specific embeddings and mean-pools them (then mean-pools with CF item ID embedding) with explicit content–ID alignment; LATTICE first fuses modality graphs with learned weights into a single adjacency, runs one graph convolution on ID embeddings, and adds the normalized graph embedding residually to the CF item embedding.
+4. Supervision granularity: DA-MRS explicitly models graded item relations (multi-modal similar vs single-modal similar vs dissimilar) in contrastive learning; LATTICE uses k-NN similarities as edges without graded contrastive supervision.
+</COMPARISON_CONTEXT>
+
+[Related Methods 2]
+Model: BM3_2023
+Idea: BM3 is a self-supervised multi-modal recommendation model that simplifies existing self-supervised learning frameworks by removing the need for auxiliary graphs and negative samples. It achieves this by bootstrapping latent contrastive views using a simple dropout augmentation technique. The model jointly optimizes three objectives: reconstructing the user-item interaction graph, aligning multi-modal features under both inter- and intra-modality perspectives, and maximizing similarity across different views of the same item. This approach reduces computational cost and memory requirements while maintaining or improving recommendation accuracy.
+Relation:
+<COMPARISON_CONTEXT>
+Similarities:
+1. Both use LightGCN to encode the user–item interaction graph for ID embeddings.
+2. Both leverage pre-extracted uni-modal features (e.g., vision/text) and map them into a shared latent space for item representation.
+3. Both add self-supervised alignment objectives to bridge multi-modal content with collaborative signals beyond plain CF training.
+
+Differences:
+1. Learning objective: DA-MRS optimizes a denoised BPR with negative sampling plus graded contrastive losses, whereas BM3 uses a BYOL-like bootstrapped cosine loss with stop-gradient and dropout without negatives.
+2. Structural modeling: DA-MRS builds modality-specific item–item semantic graphs and an item–item behavior co-occurrence graph with per-graph LightGCN, while BM3 only uses the user–item bipartite LightGCN and no item–item graphs.
+3. Fusion/alignment granularity: DA-MRS aligns (a) user preference distributions across content vs ID spaces (symmetric KL) and (b) graded item relations (multi-modal/single-modal/dissimilar), whereas BM3 does point-wise cosine alignment between uni-modal features and item IDs plus masked-view consistency without graded or distribution-level alignment.
+4. Denoising strategy: DA-MRS explicitly denoises content (cross-modal consistency pruning) and feedback (reliability weights f,g in BPR), while BM3 relies on dropout-based augmentations and L2 regularization with no explicit noise modeling.
+</COMPARISON_CONTEXT>
+Example Python Code:
+<REFERENCE_CODE_ID="BM3_2023">
+# coding: utf-8
+# @email: enoche.chow@gmail.com
+r"""
+
+################################################
+paper:  Bootstrap Latent Representations for Multi-modal Recommendation
+https://arxiv.org/abs/2207.05969
+"""
+import os
+import copy
+import random
+import numpy as np
+import scipy.sparse as sp
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from torch.nn.functional import cosine_similarity
+
+from common.abstract_recommender import GeneralRecommender
+from common.loss import EmbLoss
+
+
+class BM3(GeneralRecommender):
+    def __init__(self, config, dataset):
+        super(BM3, self).__init__(config, dataset)
+
+        self.embedding_dim = config['embedding_size']
+        self.feat_embed_dim = config['embedding_size']
+        self.n_layers = config['n_layers']
+        self.reg_weight = config['reg_weight']
+        self.cl_weight = config['cl_weight']
+        self.dropout = config['dropout']
+
+        self.n_nodes = self.n_users + self.n_items
+
+        # load dataset info
+        self.norm_adj = self.get_norm_adj_mat(dataset.inter_matrix(form='coo').astype(np.float32)).to(self.device)
+
+        self.user_embedding = nn.Embedding(self.n_users, self.embedding_dim)
+        self.item_id_embedding = nn.Embedding(self.n_items, self.embedding_dim)
+        nn.init.xavier_uniform_(self.user_embedding.weight)
+        nn.init.xavier_uniform_(self.item_id_embedding.weight)
+
+        self.predictor = nn.Linear(self.embedding_dim, self.embedding_dim)
+        self.reg_loss = EmbLoss()
+
+        nn.init.xavier_normal_(self.predictor.weight)
+
+        if self.v_feat is not None:
+            self.image_embedding = nn.Embedding.from_pretrained(self.v_feat, freeze=False)
+            self.image_trs = nn.Linear(self.v_feat.shape[1], self.feat_embed_dim)
+            nn.init.xavier_normal_(self.image_trs.weight)
+        if self.t_feat is not None:
+            self.text_embedding = nn.Embedding.from_pretrained(self.t_feat, freeze=False)
+            self.text_trs = nn.Linear(self.t_feat.shape[1], self.feat_embed_dim)
+            nn.init.xavier_normal_(self.text_trs.weight)
+
+    def get_norm_adj_mat(self, interaction_matrix):
+        A = sp.dok_matrix((self.n_users + self.n_items,
+                           self.n_users + self.n_items), dtype=np.float32)
+        inter_M = interaction_matrix
+        inter_M_t = interaction_matrix.transpose()
+        data_dict = dict(zip(zip(inter_M.row, inter_M.col + self.n_users),
+                             [1] * inter_M.nnz))
+        data_dict.update(dict(zip(zip(inter_M_t.row + self.n_users, inter_M_t.col),
+                                  [1] * inter_M_t.nnz)))
+        # scipy>=1.10 disallows direct bulk update; assign items one by one
+        for (r, c), v in data_dict.items():
+            A[r, c] = v
+        # norm adj matrix
+        sumArr = (A > 0).sum(axis=1)
+        # add epsilon to avoid Devide by zero Warning
+        diag = np.array(sumArr.flatten())[0] + 1e-7
+        diag = np.power(diag, -0.5)
+        D = sp.diags(diag)
+        L = D * A * D
+        # covert norm_adj matrix to tensor
+        L = sp.coo_matrix(L)
+        row = L.row
+        col = L.col
+        i = torch.LongTensor(np.array([row, col]))
+        data = torch.FloatTensor(L.data)
+
+        return torch.sparse.FloatTensor(i, data, torch.Size((self.n_nodes, self.n_nodes)))
+
+    def forward(self):
+        h = self.item_id_embedding.weight
+
+        ego_embeddings = torch.cat((self.user_embedding.weight, self.item_id_embedding.weight), dim=0)
+        all_embeddings = [ego_embeddings]
+        for i in range(self.n_layers):
+            ego_embeddings = torch.sparse.mm(self.norm_adj, ego_embeddings)
+            all_embeddings += [ego_embeddings]
+        all_embeddings = torch.stack(all_embeddings, dim=1)
+        all_embeddings = all_embeddings.mean(dim=1, keepdim=False)
+        u_g_embeddings, i_g_embeddings = torch.split(all_embeddings, [self.n_users, self.n_items], dim=0)
+        return u_g_embeddings, i_g_embeddings + h
+
+    def calculate_loss(self, interactions):
+        # online network
+        u_online_ori, i_online_ori = self.forward()
+        t_feat_online, v_feat_online = None, None
+        if self.t_feat is not None:
+            t_feat_online = self.text_trs(self.text_embedding.weight)
+        if self.v_feat is not None:
+            v_feat_online = self.image_trs(self.image_embedding.weight)
+
+        with torch.no_grad():
+            u_target, i_target = u_online_ori.clone(), i_online_ori.clone()
+            u_target.detach()
+            i_target.
+2025-12-16 20:18:10 - INFO - [DA-MRS] Attempt 1 final_output: Implemented **DA-MRS (DA-MRS_2024)** under the restricted two-file scope:
+
+- Wrote model code to: `/data2/liyu/llh/rn/MMRec_2/src/models/da-mrs.py`
+  - Modality-specific **denoised IIS graphs** (mean-threshold + cross-modal consistency + kNN binarization).
+  - **Behavior IIB graph** from item co-occurrence with pruning `xi_B` + kNN (keeps weights) + self-loops.
+  - **LightGCN** backbone on user–item graph for `u_u` and `h_i^id`.
+  - **LightGCN** on each item–item graph for modality embeddings `h_i^m`.
+  - Fusion: `t_i = mean(h_i^id, mean(h_i^v,h_i^t,h_i^c))` (available modalities).
+  - **Denoised BPR loss** with reliability `f(u,i)` and contradiction `g(u,i)` per paper Eq.(6–8).
+  - **Alignment losses**:
+    - `L_AU`: symmetric KL between preference distributions (default minibatch-item approximation; optional full-item via `au_use_full_items`).
+    - `L_AI`: graded item-relations contrastive loss (implemented minibatch approximation for feasibility).
+
+- Wrote hyperparameter config to: `/data2/liyu/llh/rn/MMRec_2/src/configs/model/DA-MRS.yaml`
+  - Defaults set reasonably; **grid-search limited to 3 params**: `learning_rate`, `lambda_1`, `lambda_2`.
+
+Remaining paper-to-code deviations (documented inline as comments/config choices):
+- `L_AU` and graded-relation sets are computed over **minibatch candidate items** by default (instead of all items) to avoid O(|I|) softmax and full similarity matrices each step.
+- IIS similarity uses a **linear projection to embedding_size** before cosine similarity (paper uses raw features); kept explicit as a minimal compatibility choice.
+
+No smoke-test logs were provided/run yet. If you run the benchmark and share the log, I’ll fix any interface/shape/config contract issues without masking errors.
+2025-12-16 20:18:10 - INFO - Executing command in '/data2/liyu/llh/rn/MMRec_2/src': python run_benchmark.py --model=DA-MRS --dataset baby --gpu=3
+2025-12-16 20:18:20 - INFO - [DA-MRS] run_code exit=1, log tail:
+[*] 待处理数据集 (1): ['baby'] @ GPU 3
+
+>>> [1/1] 处理 baby ...
+
+============================================================
+[*] 开始复现任务 - 模型: DA-MRS | 数据集: baby | GPU: 3
+============================================================
+[>] 执行: /data6/liyu/conda/paper_agent/bin/python -u main.py --model DA-MRS --dataset baby --gpu_id 3
+    epochs=1
+    hyper_parameters=['seed', 'learning_rate', 'lambda_1', 'lambda_2']
+    16 Dec 20:18    INFO =========1/60: Parameters:['seed', 'learning_rate', 'lambda_1', 'lambda_2']=(999, 0.0001, 10, 1)=======
+    Traceback (most recent call last):
+    File "/data2/liyu/llh/rn/MMRec_2/src/main.py", line 30, in <module>
+    File "/data2/liyu/llh/rn/MMRec_2/src/utils/quick_start.py", line 74, in quick_start
+    File "/data2/liyu/llh/rn/MMRec_2/src/utils/utils.py", line 40, in get_model
+    AttributeError: module 'models.da-mrs' has no attribute 'DA-MRS'. Did you mean: 'DAMRS'?
+
+[-] 任务异常退出 (Code: 1)
+------------------------------ 错误堆栈片段 ------------------------------
+Traceback (most recent call last):
+File "/data2/liyu/llh/rn/MMRec_2/src/main.py", line 30, in <module>
+quick_start(model=args.model, dataset=args.dataset, config_dict=config_dict, save_model=True)
+File "/data2/liyu/llh/rn/MMRec_2/src/utils/quick_start.py", line 74, in quick_start
+model = get_model(config['model'])(config, train_data).to(config['device'])
+File "/data2/liyu/llh/rn/MMRec_2/src/utils/utils.py", line 40, in get_model
+model_class = getattr(model_module, model_name)
+AttributeError: module 'models.da-mrs' has no attribute 'DA-MRS'. Did you mean: 'DAMRS'?
+------------------------------------------------------------
+[-] 详细日志已保存: logs/DA-MRS_baby_20251216_201820.log
+[-] baby 任务执行失败或未解析到指标。
+
+2025-12-16 20:18:20 - INFO - [DA-MRS] Attempt 2 user prompt: 
+The system-run smoke test failed. Use the log below to fix the root cause per the paper (do not wrap/silence errors), then rewrite the necessary files.
+
+[Last Output]
+[*] 待处理数据集 (1): ['baby'] @ GPU 3
+
+>>> [1/1] 处理 baby ...
+
+============================================================
+[*] 开始复现任务 - 模型: DA-MRS | 数据集: baby | GPU: 3
+============================================================
+[>] 执行: /data6/liyu/conda/paper_agent/bin/python -u main.py --model DA-MRS --dataset baby --gpu_id 3
+    epochs=1
+    hyper_parameters=['seed', 'learning_rate', 'lambda_1', 'lambda_2']
+    16 Dec 20:18    INFO =========1/60: Parameters:['seed', 'learning_rate', 'lambda_1', 'lambda_2']=(999, 0.0001, 10, 1)=======
+    Traceback (most recent call last):
+    File "/data2/liyu/llh/rn/MMRec_2/src/main.py", line 30, in <module>
+    File "/data2/liyu/llh/rn/MMRec_2/src/utils/quick_start.py", line 74, in quick_start
+    File "/data2/liyu/llh/rn/MMRec_2/src/utils/utils.py", line 40, in get_model
+    AttributeError: module 'models.da-mrs' has no attribute 'DA-MRS'. Did you mean: 'DAMRS'?
+
+[-] 任务异常退出 (Code: 1)
+------------------------------ 错误堆栈片段 ------------------------------
+Traceback (most recent call last):
+File "/data2/liyu/llh/rn/MMRec_2/src/main.py", line 30, in <module>
+quick_start(model=args.model, dataset=args.dataset, config_dict=config_dict, save_model=True)
+File "/data2/liyu/llh/rn/MMRec_2/src/utils/quick_start.py", line 74, in quick_start
+model = get_model(config['model'])(config, train_data).to(config['device'])
+File "/data2/liyu/llh/rn/MMRec_2/src/utils/utils.py", line 40, in get_model
+model_class = getattr(model_module, model_name)
+AttributeError: module 'models.da-mrs' has no attribute 'DA-MRS'. Did you mean: 'DAMRS'?
+------------------------------------------------------------
+[-] 详细日志已保存: logs/DA-MRS_baby_20251216_201820.log
+[-] baby 任务执行失败或未解析到指标。
+
+
+Rules:
+- Only modify these two files: /data2/liyu/llh/rn/MMRec_2/src/models/da-mrs.py and /data2/liyu/llh/rn/MMRec_2/src/configs/model/DA-MRS.yaml.
+- Fix the actual cause suggested by the error/log, avoid broad try/except, and keep behavior aligned with the paper.
+- End with a brief conclusion.
+
+2025-12-16 20:19:26 - INFO - [DA-MRS] Attempt 2 final_output: Fixed the smoke-test root cause: the framework tries to `getattr(model_module, model_name)` with `model_name="DA-MRS"`, but the class was named `DAMRS`.
+
+### Change made
+- Updated `/data2/liyu/llh/rn/MMRec_2/src/models/da-mrs.py` to **export an attribute named `"DA-MRS"`** by registering:
+  - `globals()['DA-MRS'] = DAMRS`
+
+This matches the runner’s expectation without changing the paper logic or adding any error-masking.
+
+### Files modified
+- `/data2/liyu/llh/rn/MMRec_2/src/models/da-mrs.py` (rewritten with the compatibility export at the end)
+- `/data2/liyu/llh/rn/MMRec_2/src/configs/model/DA-MRS.yaml` (unchanged)
+
+No new tests were run here (system will re-run smoke test next).
+2025-12-16 20:19:26 - INFO - Executing command in '/data2/liyu/llh/rn/MMRec_2/src': python run_benchmark.py --model=DA-MRS --dataset baby --gpu=3
+2025-12-16 20:19:40 - INFO - [DA-MRS] run_code exit=1, log tail:
+earning_rate', 'lambda_1', 'lambda_2']=(999, 0.0001, 10, 1)=======
+    Traceback (most recent call last):
+    File "/data2/liyu/llh/rn/MMRec_2/src/main.py", line 30, in <module>
+    File "/data2/liyu/llh/rn/MMRec_2/src/utils/quick_start.py", line 74, in quick_start
+    File "/data2/liyu/llh/rn/MMRec_2/src/models/da-mrs.py", line 153, in __init__
+    File "/data2/liyu/llh/rn/MMRec_2/src/models/da-mrs.py", line 191, in _build_semantic_graphs
+    File "/data6/liyu/conda/paper_agent/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1775, in _wrapped_call_impl
+    File "/data6/liyu/conda/paper_agent/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1786, in _call_impl
+    File "/data6/liyu/conda/paper_agent/lib/python3.10/site-packages/torch/nn/modules/linear.py", line 134, in forward
+    RuntimeError: Expected all tensors to be on the same device, but got mat1 is on cuda:0, different from other tensors on cpu (when checking argument in method wrapper_CUDA_addmm)
+
+ line 153, in __init__
+self.norm_adj_ii.update(self._build_semantic_graphs())
+File "/data2/liyu/llh/rn/MMRec_2/src/models/da-mrs.py", line 191, in _build_semantic_graphs
+proj = self.modal_proj[m](feat)
+File "/data6/liyu/conda/paper_agent/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1775, in _wrapped_call_impl
+return self._call_impl(*args, **kwargs)
+File "/data6/liyu/conda/paper_agent/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1786, in _call_impl
+return forward_call(*args, **kwargs)
+File "/data6/liyu/conda/paper_agent/lib/python3.10/site-packages/torch/nn/modules/linear.py", line 134, in forward
+return F.linear(input, self.weight, self.bias)
+RuntimeError: Expected all tensors to be on the same device, but got mat1 is on cuda:0, different from other tensors on cpu (when checking argument in method wrapper_CUDA_addmm)
+------------------------------------------------------------
+[-] 详细日志已保存: logs/DA-MRS_baby_20251216_201940.log
+[-] baby 任务执行失败或未解析到指标。
+
+2025-12-16 20:19:40 - INFO - [DA-MRS] Attempt 3 user prompt: 
+The system-run smoke test failed. Use the log below to fix the root cause per the paper (do not wrap/silence errors), then rewrite the necessary files.
+
+[Last Output]
+earning_rate', 'lambda_1', 'lambda_2']=(999, 0.0001, 10, 1)=======
+    Traceback (most recent call last):
+    File "/data2/liyu/llh/rn/MMRec_2/src/main.py", line 30, in <module>
+    File "/data2/liyu/llh/rn/MMRec_2/src/utils/quick_start.py", line 74, in quick_start
+    File "/data2/liyu/llh/rn/MMRec_2/src/models/da-mrs.py", line 153, in __init__
+    File "/data2/liyu/llh/rn/MMRec_2/src/models/da-mrs.py", line 191, in _build_semantic_graphs
+    File "/data6/liyu/conda/paper_agent/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1775, in _wrapped_call_impl
+    File "/data6/liyu/conda/paper_agent/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1786, in _call_impl
+    File "/data6/liyu/conda/paper_agent/lib/python3.10/site-packages/torch/nn/modules/linear.py", line 134, in forward
+    RuntimeError: Expected all tensors to be on the same device, but got mat1 is on cuda:0, different from other tensors on cpu (when checking argument in method wrapper_CUDA_addmm)
+
+ line 153, in __init__
+self.norm_adj_ii.update(self._build_semantic_graphs())
+File "/data2/liyu/llh/rn/MMRec_2/src/models/da-mrs.py", line 191, in _build_semantic_graphs
+proj = self.modal_proj[m](feat)
+File "/data6/liyu/conda/paper_agent/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1775, in _wrapped_call_impl
+return self._call_impl(*args, **kwargs)
+File "/data6/liyu/conda/paper_agent/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1786, in _call_impl
+return forward_call(*args, **kwargs)
+File "/data6/liyu/conda/paper_agent/lib/python3.10/site-packages/torch/nn/modules/linear.py", line 134, in forward
+return F.linear(input, self.weight, self.bias)
+RuntimeError: Expected all tensors to be on the same device, but got mat1 is on cuda:0, different from other tensors on cpu (when checking argument in method wrapper_CUDA_addmm)
+------------------------------------------------------------
+[-] 详细日志已保存: logs/DA-MRS_baby_20251216_201940.log
+[-] baby 任务执行失败或未解析到指标。
+
+
+Rules:
+- Only modify these two files: /data2/liyu/llh/rn/MMRec_2/src/models/da-mrs.py and /data2/liyu/llh/rn/MMRec_2/src/configs/model/DA-MRS.yaml.
+- Fix the actual cause suggested by the error/log, avoid broad try/except, and keep behavior aligned with the paper.
+- End with a brief conclusion.
+
+2025-12-16 20:20:43 - INFO - [DA-MRS] Attempt 3 final_output: Fixed the **actual crash**: a device mismatch during semantic-graph construction.
+
+### Root cause (from log)
+`self.modal_proj[m]` is on **cuda**, but the input `feat` was on **cpu**, causing:
+> RuntimeError: Expected all tensors to be on the same device ... mat1 is on cuda:0 ... other tensors on cpu
+
+### Fix (paper-consistent, no error masking)
+In `_build_semantic_graphs()`:
+- Move modality features to `self.device` **before** applying the projection layer:
+  - `feat_dev = feat.float().to(self.device)`
+  - `proj = self.modal_proj[m](feat_dev)`
+- Then move `proj` back to CPU (detached) for similarity matrix computation to control GPU memory:
+  - `sim = cosine(proj.detach().cpu(), ...)`
+
+### Files modified
+- `/data2/liyu/llh/rn/MMRec_2/src/models/da-mrs.py` (rewritten with the device-consistency fix)
+
+Config file unchanged.
+
+If the next smoke test reveals further issues (e.g., time/memory due to O(n_items^2) similarity), we’ll address them by implementing a paper-faithful but scalable kNN construction (still without suppressing errors).
+2025-12-16 20:20:43 - INFO - Executing command in '/data2/liyu/llh/rn/MMRec_2/src': python run_benchmark.py --model=DA-MRS --dataset baby --gpu=3
+2025-12-16 20:21:04 - INFO - [DA-MRS] run_code exit=1, log tail:
+earning_rate', 'lambda_1', 'lambda_2']=(999, 0.0001, 10, 1)=======
+    Traceback (most recent call last):
+    File "/data2/liyu/llh/rn/MMRec_2/src/main.py", line 30, in <module>
+    File "/data2/liyu/llh/rn/MMRec_2/src/utils/quick_start.py", line 74, in quick_start
+    File "/data2/liyu/llh/rn/MMRec_2/src/models/da-mrs.py", line 124, in __init__
+    File "/data2/liyu/llh/rn/MMRec_2/src/models/da-mrs.py", line 160, in _build_semantic_graphs
+    File "/data6/liyu/conda/paper_agent/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1775, in _wrapped_call_impl
+    File "/data6/liyu/conda/paper_agent/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1786, in _call_impl
+    File "/data6/liyu/conda/paper_agent/lib/python3.10/site-packages/torch/nn/modules/linear.py", line 134, in forward
+    RuntimeError: Expected all tensors to be on the same device, but got mat1 is on cuda:0, different from other tensors on cpu (when checking argument in method wrapper_CUDA_addmm)
+
+e 124, in __init__
+self.norm_adj_ii.update(self._build_semantic_graphs())
+File "/data2/liyu/llh/rn/MMRec_2/src/models/da-mrs.py", line 160, in _build_semantic_graphs
+proj = self.modal_proj[m](feat_dev)
+File "/data6/liyu/conda/paper_agent/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1775, in _wrapped_call_impl
+return self._call_impl(*args, **kwargs)
+File "/data6/liyu/conda/paper_agent/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1786, in _call_impl
+return forward_call(*args, **kwargs)
+File "/data6/liyu/conda/paper_agent/lib/python3.10/site-packages/torch/nn/modules/linear.py", line 134, in forward
+return F.linear(input, self.weight, self.bias)
+RuntimeError: Expected all tensors to be on the same device, but got mat1 is on cuda:0, different from other tensors on cpu (when checking argument in method wrapper_CUDA_addmm)
+------------------------------------------------------------
+[-] 详细日志已保存: logs/DA-MRS_baby_20251216_202104.log
+[-] baby 任务执行失败或未解析到指标。
+
+2025-12-16 20:21:04 - INFO - [DA-MRS] Attempt 4 user prompt: 
+The system-run smoke test failed. Use the log below to fix the root cause per the paper (do not wrap/silence errors), then rewrite the necessary files.
+
+[Last Output]
+earning_rate', 'lambda_1', 'lambda_2']=(999, 0.0001, 10, 1)=======
+    Traceback (most recent call last):
+    File "/data2/liyu/llh/rn/MMRec_2/src/main.py", line 30, in <module>
+    File "/data2/liyu/llh/rn/MMRec_2/src/utils/quick_start.py", line 74, in quick_start
+    File "/data2/liyu/llh/rn/MMRec_2/src/models/da-mrs.py", line 124, in __init__
+    File "/data2/liyu/llh/rn/MMRec_2/src/models/da-mrs.py", line 160, in _build_semantic_graphs
+    File "/data6/liyu/conda/paper_agent/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1775, in _wrapped_call_impl
+    File "/data6/liyu/conda/paper_agent/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1786, in _call_impl
+    File "/data6/liyu/conda/paper_agent/lib/python3.10/site-packages/torch/nn/modules/linear.py", line 134, in forward
+    RuntimeError: Expected all tensors to be on the same device, but got mat1 is on cuda:0, different from other tensors on cpu (when checking argument in method wrapper_CUDA_addmm)
+
+e 124, in __init__
+self.norm_adj_ii.update(self._build_semantic_graphs())
+File "/data2/liyu/llh/rn/MMRec_2/src/models/da-mrs.py", line 160, in _build_semantic_graphs
+proj = self.modal_proj[m](feat_dev)
+File "/data6/liyu/conda/paper_agent/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1775, in _wrapped_call_impl
+return self._call_impl(*args, **kwargs)
+File "/data6/liyu/conda/paper_agent/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1786, in _call_impl
+return forward_call(*args, **kwargs)
+File "/data6/liyu/conda/paper_agent/lib/python3.10/site-packages/torch/nn/modules/linear.py", line 134, in forward
+return F.linear(input, self.weight, self.bias)
+RuntimeError: Expected all tensors to be on the same device, but got mat1 is on cuda:0, different from other tensors on cpu (when checking argument in method wrapper_CUDA_addmm)
+------------------------------------------------------------
+[-] 详细日志已保存: logs/DA-MRS_baby_20251216_202104.log
+[-] baby 任务执行失败或未解析到指标。
+
+
+Rules:
+- Only modify these two files: /data2/liyu/llh/rn/MMRec_2/src/models/da-mrs.py and /data2/liyu/llh/rn/MMRec_2/src/configs/model/DA-MRS.yaml.
+- Fix the actual cause suggested by the error/log, avoid broad try/except, and keep behavior aligned with the paper.
+- End with a brief conclusion.
+
+2025-12-16 20:22:22 - INFO - [DA-MRS] Attempt 4 final_output: Fixed the repeated device-mismatch crash during `_build_semantic_graphs()`.
+
+### Root cause (per log)
+Even though features were moved to GPU, `self.modal_proj[m]` was still on **CPU** at graph-construction time (because this framework moves the whole model to device *after* `__init__`). So `feat_dev` (cuda) × `modal_proj` (cpu) triggered:
+> mat1 is on cuda:0, different from other tensors on cpu
+
+### Fix (no suppression, consistent with method)
+In `__init__`, after creating embeddings and modality projection layers, I added:
+- `self.to(self.device)`
+
+This ensures all modules used inside `__init__` (notably `modal_proj`) are on the correct device **before** building graphs.
+
+Also kept the previous intended design:
+- Projection runs on `self.device`
+- Similarity matrix construction runs on CPU via `proj.detach().cpu()`
+
+### Files modified
+- `/data2/liyu/llh/rn/MMRec_2/src/models/da-mrs.py` (rewritten with explicit `self.to(self.device)` before graph building)
+- Config unchanged.
+
+If the next smoke test fails, please share the new log and I’ll continue fixing the next root cause.
+2025-12-16 20:22:22 - INFO - Executing command in '/data2/liyu/llh/rn/MMRec_2/src': python run_benchmark.py --model=DA-MRS --dataset baby --gpu=3
+2025-12-16 20:27:22 - WARNING - Command timed out after 300s: python run_benchmark.py --model=DA-MRS --dataset baby --gpu=3
+2025-12-16 20:27:22 - WARNING - [DA-MRS] run_code timed out after 300s
+2025-12-16 20:27:22 - INFO - [DA-MRS] run_code exit=-9, log tail:
+!!
+    16 Dec 20:26    INFO best valid result: recall@5: 0.0002    recall@10: 0.0008    recall@20: 0.0021    recall@50: 0.0053    ndcg@5: 0.0001    ndcg@10: 0.0003    ndcg@20: 0.0006    ndcg@50: 0.0012    precision@5: 0.0001    precision@10: 0.0001    precision@20: 0.0001    precision@50: 0.0001    map@5: 0.0001    map@10: 0.0001    map@20: 0.0002    map@50: 0.0003
+    16 Dec 20:26    INFO test result: recall@5: 0.0005    recall@10: 0.0009    recall@20: 0.0017    recall@50: 0.0042    ndcg@5: 0.0004    ndcg@10: 0.0005    ndcg@20: 0.0007    ndcg@50: 0.0012    precision@5: 0.0001    precision@10: 0.0001    precision@20: 0.0001    precision@50: 0.0001    map@5: 0.0003    map@10: 0.0004    map@20: 0.0004    map@50: 0.0005
+    16 Dec 20:26    INFO ████Current BEST████:
+    Parameters: ['seed', 'learning_rate', 'lambda_1', 'lambda_2']=(999, 0.0001, 10, 0.001),
+    16 Dec 20:26    INFO =========13/60: Parameters:['seed', 'learning_rate', 'lambda_1', 'lambda_2']=(999, 0.0001, 0.1, 0.01)=======
+
+Error: Process timed out after 300 seconds. Consider checking the code for infinite loops or reducing the number of epochs.
+2025-12-16 20:27:22 - INFO - [DA-MRS] Attempt 5 user prompt: 
+The system-run smoke test failed. Use the log below to fix the root cause per the paper (do not wrap/silence errors), then rewrite the necessary files.
+
+[Last Output]
+!!
+    16 Dec 20:26    INFO best valid result: recall@5: 0.0002    recall@10: 0.0008    recall@20: 0.0021    recall@50: 0.0053    ndcg@5: 0.0001    ndcg@10: 0.0003    ndcg@20: 0.0006    ndcg@50: 0.0012    precision@5: 0.0001    precision@10: 0.0001    precision@20: 0.0001    precision@50: 0.0001    map@5: 0.0001    map@10: 0.0001    map@20: 0.0002    map@50: 0.0003
+    16 Dec 20:26    INFO test result: recall@5: 0.0005    recall@10: 0.0009    recall@20: 0.0017    recall@50: 0.0042    ndcg@5: 0.0004    ndcg@10: 0.0005    ndcg@20: 0.0007    ndcg@50: 0.0012    precision@5: 0.0001    precision@10: 0.0001    precision@20: 0.0001    precision@50: 0.0001    map@5: 0.0003    map@10: 0.0004    map@20: 0.0004    map@50: 0.0005
+    16 Dec 20:26    INFO ████Current BEST████:
+    Parameters: ['seed', 'learning_rate', 'lambda_1', 'lambda_2']=(999, 0.0001, 10, 0.001),
+    16 Dec 20:26    INFO =========13/60: Parameters:['seed', 'learning_rate', 'lambda_1', 'lambda_2']=(999, 0.0001, 0.1, 0.01)=======
+
+Error: Process timed out after 300 seconds. Consider checking the code for infinite loops or reducing the number of epochs.
+
+Rules:
+- Only modify these two files: /data2/liyu/llh/rn/MMRec_2/src/models/da-mrs.py and /data2/liyu/llh/rn/MMRec_2/src/configs/model/DA-MRS.yaml.
+- Fix the actual cause suggested by the error/log, avoid broad try/except, and keep behavior aligned with the paper.
+- End with a brief conclusion.
+
+2025-12-16 20:27:37 - INFO - [DA-MRS] Attempt 5 final_output: The timeout is caused by an overly large hyperparameter sweep (60 runs) within the 300s smoke-test budget. The log shows it was iterating `13/60` when it timed out; each run already completes train/valid/test, so the sweep dominates runtime.
+
+### Fix (aligned with constraints)
+Reduced the grid search to a **single setting** (still listing ≤3 hyperparameters, but with singleton values) to keep smoke tests fast and deterministic.
+
+### File changed
+- `/data2/liyu/llh/rn/MMRec_2/src/configs/model/DA-MRS.yaml`
+  - `learning_rate: [1e-3]`
+  - `lambda_1: [0.1]`
+  - `lambda_2: [1e-3]`
+
+Model code unchanged.
+
+This addresses the real cause (runtime budget exceeded due to sweep size) without suppressing errors or altering the DA-MRS method logic.
+2025-12-16 20:27:37 - INFO - Executing command in '/data2/liyu/llh/rn/MMRec_2/src': python run_benchmark.py --model=DA-MRS --dataset baby --gpu=3
+2025-12-16 20:27:59 - INFO - [DA-MRS] run_code exit=0, log tail:
+sion@20: 0.0033    precision@50: 0.0024    map@5: 0.0137    map@10: 0.0156    map@20: 0.0172    map@50: 0.0187    ,
+    best test: recall@5: 0.0262    recall@10: 0.0398    recall@20: 0.0634    recall@50: 0.1144    ndcg@5: 0.0177    ndcg@10: 0.0222    ndcg@20: 0.0283    ndcg@50: 0.0386    precision@5: 0.0058    precision@10: 0.0045    precision@20: 0.0036    precision@50: 0.0026    map@5: 0.0145    map@10: 0.0162    map@20: 0.0179    map@50: 0.0195
+    █████████████ BEST ████████████████
+    16 Dec 20:27    INFO 	Parameters: ['seed', 'learning_rate', 'lambda_1', 'lambda_2']=(999, 0.001, 0.1, 0.001),
+[+] 解析成功: {'recall@5': 0.0262, 'recall@10': 0.0398, 'recall@20': 0.0634, 'recall@50': 0.1144, 'ndcg@5': 0.0177, 'ndcg@10': 0.0222, 'ndcg@20': 0.0283, 'ndcg@50': 0.0386, 'precision@5': 0.0058, 'precision@10': 0.0045, 'precision@20': 0.0036, 'precision@50': 0.0026, 'map@5': 0.0145, 'map@10': 0.0162, 'map@20': 0.0179, 'map@50': 0.0195}
+[+] 排行榜已更新: /data2/liyu/llh/rn/MMRec_2/src/leaderboard.csv
+
+2025-12-16 20:27:59 - INFO - Finished node DA-MRS_2024 in 737.91s | Status=Success
+2025-12-16 20:27:59 - INFO - Task finished.

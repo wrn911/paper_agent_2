@@ -1,0 +1,73 @@
+## Generalizable
+
+- **Align early with the host framework’s contracts (config/dataset/trainer hooks)**  
+  Treat `config` as a framework object (often mapping-like, not a Python `dict`): prefer `key in config` and `config[key]`; don’t assume `.get()`. Implement expected lifecycle hooks (e.g., pre/post-epoch) as safe no-ops if unused. Keep method signatures harness-compatible (e.g., accept `(users, pos_items, neg_items)` if the trainer expects it).
+
+- **Use a small compatibility accessor for configs**  
+  Centralize config reads in a helper (e.g., `cfg(key, default=_MISSING)`) that supports mapping-style access and fails loudly for truly required keys.
+
+- **Don’t assume constructor inputs are raw datasets**  
+  `dataset` may be a wrapper/dataloader. Prefer framework-initialized attributes (`self.n_users`, `self.n_items`) or resolve through common wrapper paths (`obj.dataset`, etc.) with a prioritized lookup.
+
+- **Normalize data/interface variability at one boundary**  
+  Convert whichever interaction/graph representation you receive (sparse matrix, edge index, table/columns, callable provider) into one canonical internal format and use it everywhere else.
+
+- **Establish a “shape/field contract” up front**  
+  Validate and assert critical shapes/ID spaces early (user/item ID ranges, `[n_items, d]` modality matrices, embedding dims, graph adjacency shapes). This prevents silent broadcasting, mismatched fusion/projection dims, and hard-to-debug indexing errors.
+
+- **Fix root causes at the failing call site; don’t mask errors**  
+  Avoid broad `try/except` that hides interface mismatches or missing fields; fix the incompatible assumption (config access, dataset field names, interaction format) directly.
+
+- **Make the smallest explicit assumptions and document them**  
+  When paper/framework interfaces are ambiguous (feature keys, available modalities, required fields), state minimal assumptions in code/comments and keep them easy to change.
+
+- **Cache/precompute expensive artifacts carefully**  
+  Precompute and reuse fixed expensive structures (e.g., kNN graphs) when they are intended to be static; add explicit reset/refresh points for epoch-scoped caches to avoid staleness after parameter updates.
+
+- **Avoid caching autograd-tied tensors across optimization steps**  
+  Don’t reuse training-time tensors that carry computation graphs across steps (can trigger “backward through the graph a second time”). Recompute per batch, or cache only detached outputs meant for evaluation.
+
+- **Treat timeouts and “no space left” as runtime-budget/config issues first**  
+  Check and reduce multiplicative workload sources (epochs × sweeps × repeated eval/logging/preprocessing) before suspecting model bugs. Prefer small, explicit config changes (fewer epochs, disable sweeps) over code hacks.
+
+- **Keep hyperparameter search tiny and stability-focused**  
+  Limit sweeps to ~1–3 high-impact knobs (typically LR, regularization, dropout/corruption strength). Disable sweeps for smoke tests/CI and document how to restore full tuning.
+
+- **Gate expensive preprocessing behind config flags**  
+  Make heavy steps (e.g., item–item kNN building) optional and controllable via config for portability across datasets/environments.
+
+- **Keep multi-term objectives explicit and inspectable**  
+  Separate loss terms with explicit weights so stability/ablation/debugging is straightforward; ensure objective “mode switches” are internally consistent.
+
+## Pending/Specific
+
+- **Modality optionality and dataset field-name quirks (repo/dataset-specific)**  
+  Handling missing modalities is generally useful, but the exact feature keys/encodings (`v_feat`, `t_feat`, etc.) and storage location (dataset vs wrapper) vary widely—require per-repo adapters and explicit assertions/fallbacks.
+
+- **Graph construction details tied to particular papers/models**  
+  Model-specific requirements (e.g., particular normalization, self-loops, bipartite vs homogeneous adjacency, shallow “one-step” refinement graphs, frozen vs learned graphs) should stay paper-scoped.
+
+- **Top‑K neighbor choices and co-occurrence settings**  
+  Concrete K defaults (e.g., 10, 40–50) and stability claims are dataset/paper dependent; keep only the reminder to tune K and sparsification per dataset/budget.
+
+- **Paper-specific SSL/contrastive formulations**  
+  Details like “no negatives” vs “in-batch negatives,” “stop-gradient + predictor,” view generation via embedding dropout, and mode-specific heads/augmentations depend on the target paper; generalize only as “keep SSL implementation consistent with the stated objective.”
+
+- **Fusion operator implementation specifics**  
+  Notes like “concat needs projection; sum/max doesn’t” depend on the architecture/config; retain only as a caution to keep tensor dims and config consistent.
+
+- **“Disable unclear objectives by default”**  
+  Choosing defaults like `cl_weight=0` can be pragmatic for uncertain reproductions, but it’s an experimental policy decision rather than universal guidance.
+
+- **Scalability note: full similarity matrices for kNN**  
+  The warning is general, but the remedy (chunked kNN vs ANN libraries, exact tradeoffs) is implementation/dataset dependent; keep paper-specific prescriptions out of the main KB.
+
+- **Paper-scale training schedules vs CI-smoke settings**  
+  Statements like “~1000 epochs” being paper-default (MGCN/FREEDOM/etc.) are reproduction-specific; keep as documentation guidance for those papers rather than universal defaults.
+
+- **Anti-pattern reminders (retain as “don’t do this”)**  
+  - Assuming `config.get()` exists on framework configs.  
+  - Assuming `dataset` is always the raw dataset with `n_users/n_items`.  
+  - Hardcoding universal feature field names.  
+  - Masking errors with broad `try/except`.  
+  - Leaving sweeps enabled in smoke tests and then only lowering epochs.

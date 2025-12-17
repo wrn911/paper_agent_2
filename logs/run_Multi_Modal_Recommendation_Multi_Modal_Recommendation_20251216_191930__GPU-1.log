@@ -1,0 +1,312 @@
+2025-12-16 19:19:30 - INFO - Worker starting with 1 nodes.
+2025-12-16 19:19:30 - INFO - Starting train task for 1 nodes.
+2025-12-16 19:19:30 - INFO - [MVGAE] System prompt: 
+You are a paper-reproduction ReAct agent. Primary goal: faithfully implement the paper. Do not hide errors; use smoke-test feedback to fix root causes.
+
+[Tools & Permissions]
+- Only use the provided tools: read/write allowed files, apply patches to allowed files.
+- You may ONLY read/write the two specific files of the current paper: the model code file and the hyperparameter file. Everything else is forbidden.
+- You cannot execute shell commands yourself; the system will run the benchmark command and return the log.
+
+[Required Workflow]
+- Start with a mental shape/module check (inputs, outputs, losses, data flow).
+- Implement the paper as described; if the paper is ambiguous, state minimal assumptions inline as comments/config choices.
+- Write code + config to the given paths via tools (no raw code in replies).
+- Treat failing smoke tests as signals: inspect logs, fix the cause per paper intent, and re-write files. Do not wrap or silence errors to pass.
+- Avoid broad try/except; prefer explicit, narrow error handling only when the paper implies it.
+- Conclude with brief changes + whether tests (if any) were run/passed; note any remaining deviations from the paper.
+
+[Delivery Requirements]
+- Prioritize paper fidelity over “just running.” Keep hyperparameter search minimal and defaults reasonable.
+- Maintain device consistency; keep replies brief; no large code dumps in replies (write files instead).
+
+[Global Knowledge]
+- Use only generalizable tips from the knowledge base; ignore dataset-specific or misleading items unless explicitly applicable.
+- Current knowledge:
+
+
+2025-12-16 19:19:30 - INFO - [MVGAE] Attempt 1 user prompt: 
+Goal: Using paper info and graph context, implement the model code + hyperparameter file at the specified paths. If the paper is unclear, make the smallest explicit assumptions (comment them). System tests may run later and return logs to guide fixes—do not mask errors to “pass.”
+
+[Paper Node]
+- Title: MVGAE_2021
+- Method name: MVGAE
+- Core idea: The paper tackles multi-modal recommendation on sparse user–item graphs where item features are noisy and different modalities have different reliability. Standard graph-based and multi-modal recommenders typically treat node embeddings as deterministic and fuse modalities without modeling uncertainty, which can lead to overfitting to sparse interactions or being misled by noisy visual/textual features. MVGAE (Multi-Modal Variational Graph Auto-Encoder) addresses this by assigning each user and item, in each modality, a Gaussian latent variable whose mean encodes semantic information and whose variance quantifies uncertainty/noise. Modality-specific GCN encoders aggregate neighbor information and item content to infer these Gaussians. The modality-specific posteriors are then fused using a product-of-experts (PoE), so that modalities with lower variance (higher confidence) contribute more to the joint feature-based latent representation. A separate GCN encoder produces collaborative-only latents from the interaction graph, and a second PoE layer hierarchically fuses feature-based and collaborative-based Gaussians. During training, samples from the joint Gaussian (via reparameterization) are fed into a BPR-style inner-product decoder to reconstruct observed interactions, with a beta-weighted KL term controlling how much information flows from noisy features into the latent space. This design yields uncertainty-aware, noise-robust multi-modal embeddings, supports missing modalities via PoE over subsets, and improves cold-start performance by leveraging content when interactions are scarce.
+- Method description: 
+# III. METHODOLOGY
+
+In this section, we will introduce our proposed MVGAE in details. The framework is shown in Fig. 1, which consists of a hierarchical multi-modal encoder and an inner product decoder. To better exploit the information of each modality, we use modality-specific encoders to infer modality-specific latent variables. Then we resort to conditional independence assumption to derive a tractable objective for MVGAE, where single-modal latent variables are fused by a product-of-experts (PoE) module to get feature-based latent variable. Another PoE module is utilized to fuse feature-based and collaborative-based latent variables hierarchically. Finally, the inner product decoder is adopted to reconstruct the user-item adjacency matrix such that the final prediction could be made according to the learned latent embeddings. Notations used in this article are summarized in Table I.
+
+![](images/c66c18d7054a8d0f79cfe8020eb6760ba6e9817c61f6b3d2353c927ca8af550f.jpg)  
+Fig. 1. Framework of MVGAE. First, features of each modality $\mathbf { X } _ { m }$ and user-item adjacency matrix A are encoded into modality-specific latent variables. Second, feature-based latent variable is obtained by taking the product of modality-specific variables with a PoE module, and then feature-based and collaborative-based latent variables are fused with a higher-level PoE module hierarchically to compute the joint latent variables Z, where sample $\hat { \mathbf { Z } }$ is drawn with the reparamerization trick. Third, the link between user $_ u$ and item $_ i$ is decoded by an inner product decoder.
+
+TABLE I NOTATIONS USED IN OUR METHOD   
+
+<table><tr><td>Notation</td><td>Description</td></tr><tr><td>u∈u</td><td>user u,in user setU with |U| nodes</td></tr><tr><td>i∈I</td><td>itemi,in item set I with |Z|nodes</td></tr><tr><td>d</td><td>dimension of latent embeddings</td></tr><tr><td>G= (v,ε)</td><td>user-item bipartite graph</td></tr><tr><td>V=u+I</td><td>vertex set of G</td></tr><tr><td>N = |U|+||</td><td>number of nodes in G</td></tr><tr><td>k∈{1,...,N}</td><td>index for nodes in G</td></tr><tr><td>m∈{i.,...,M} AERNXN</td><td>index for modalities</td></tr><tr><td></td><td>the adjacency matrix of G matrix of initial user (item) node features</td></tr><tr><td>Um (Vm) Xm =[Um,Vm]</td><td>matrix of initial node features for G</td></tr><tr><td>ZmERN×2d</td><td></td></tr><tr><td></td><td>matrix of latent variables for modality m</td></tr><tr><td>μm∈RNxd Om ∈RN×d</td><td>mean for Zm</td></tr><tr><td></td><td>standard deviation for Zm</td></tr><tr><td>μ{f,c} eRNxd</td><td>mean for feature,collaborative</td></tr><tr><td>T{fC}∈RNxd</td><td>standard deviation for feature,collaborative</td></tr><tr><td>ZERN×2d</td><td>matrix of joint latent variables</td></tr><tr><td>μERNxd</td><td>mean for Z</td></tr><tr><td>geRNxd</td><td>standard deviation for Z</td></tr></table>
+
+![](images/a6d09cc3e0c9001da090b90c8abfa28654adec59177b9ea8e7ce22881c777c72.jpg)  
+Fig. 2. Diagram of the moGCN-based layers with aggreg lity-specific encoder which is coon and self-combination operations. $\bar { \mathbf { x } } _ { k } ^ { ( 0 ) }$ ed byis the $k$ x(L)k is employed to infer the latent variable for node k which is parameterized by $\pmb { \mu } _ { k }$ and $\sigma _ { k }$ .
+
+# A. Multi-Modal Encoder
+
+1) Modality-Specific Encoder: Given the user-item bipartite graph $G$ , we have the adjacency matrix A where for each element $\mathbf { A } _ { i j }$ in this matrix, if the node $i$ and $j$ are adjacent, and then ${ \bf A } _ { i j } = 1$ , otherwise ${ \bf A } _ { i j } = 0$ . Furthermore, we assume the diagonal elements to be 1 as in [33]. Therefore, the adjacency matrix denotes an annular graph where each node has a self-loop to better enhance its own features during message aggregation. For modality $m$ , the matrix of initial node features $\mathbf { X } _ { m }$ is concatenated by node features of users ${ \mathbf { U } } _ { m }$ and items ${ \mathbf { V } _ { m } }$ . ${ \mathbf { U } } _ { m }$ is randomly sampled from Gaussian distributions initially and ${ \mathbf { V } } _ { m }$ is the feature matrix extracted from original item contents. Our modality-specific encoder aims to infer the modality-specific latent variables using A and $\mathbf { X } _ { m }$ . Given the latent variables $\mathbf { Z } _ { m }$ , nodes in $G$ are assumed to be conditional independent [33], where our modality-specific inference model can be represented as:
+
+$$
+q _ { \phi } ( \mathbf { Z } _ { m } | \mathbf { X } _ { m } , \mathbf { A } ) = \prod _ { k = 1 } ^ { N } q _ { \phi } \left( \mathbf { z } _ { m } ^ { k } | \mathbf { X } _ { m } , \mathbf { A } \right)
+$$
+
+$$
+q _ { \phi } \left( \mathbf { z } _ { m } ^ { k } | \mathbf { X } _ { m } , \mathbf { A } \right) = { \mathcal { N } } \left( \mathbf { z } _ { m } ^ { k } | { \boldsymbol { \mu } } _ { m } ^ { k } , \mathrm { d i a g } \left( { \boldsymbol { \sigma } } _ { m } ^ { k } ^ { 2 } \right) \right) ,
+$$
+
+where $N = | \mathcal { U } | + | \mathcal { T } |$ is the number of nodes and $k \in$ $\{ 1 , \ldots , N \}$ is the index of nodes. $\mathbf { z } _ { m } ^ { k }$ denotes the latent variable for the $k$ th node with the matrix form $\mathbf { Z } _ { m }$ w.r.t. modality $m$ . Here, we assume each node as a Gaussian variable, $\pmb { \mu } _ { m }$ is the matrix of mean vectors, similarly, $\log ( { \pmb { \sigma } _ { m } } ^ { 2 } )$ is the matrix of log of diagonal variance vectors.
+
+The modality-specific inference model is parameterized by GCN-based layers. The details are presented in Fig. 2. To better capture modality-specific features and interactions, the GCN-based layer is well-designed which contains two parts: aggregation and self-combination. We focus on modality $m$ in the following of this section. Moreover, multiple GCN-based layers could be stacked to explore the higher-order connectivity information. In this way, the representations of nodes can be recursively calculated, where we denote $l$ as the propagation steps.
+
+For a node $k$ in $G$ , we employ a mean aggregation function to fuse the content features of its neighbors, where the aggregation based on the message-passing mechanism of GCNs helps to gather features from its neighbors. $\hat { \mathbf { x } } _ { k } ^ { ( l ) }$ is the representation of node $k$ after lth layer aggregations which calculates as:
+
+$$
+\hat { \mathbf { x } } _ { k } ^ { ( l ) } = \mathrm { L e a k y R e L U } \left( \frac { 1 } { | \mathbb { N } _ { k } | } \sum _ { j \in \mathbb { N } _ { k } } \mathbf { W } _ { m , 1 } ^ { ( l ) } \mathbf { x } _ { j } ^ { ( l ) } \right) ,
+$$
+
+where $\mathbb { N } _ { k } = \{ j | ( k , j ) \in \mathcal { E } \}$ denotes the neighbors of node $k$ . $\mathbf { x } _ { j } ^ { ( l ) }$ is the feature of node $j$ after the lth layer. $\mathrm { W } _ { m , 1 } ^ { ( l ) }$ is the feature 1transformation matrix. During the aggregation, for a user, features of his or her interacted items converge such that preferred aspects of items for the user could be strengthened in the latent variable. With multi-layer aggregation, the embedding process can gather more information and the sparsity problem could be alleviated.
+
+Self-combination is employed to amplify its own feature $\mathbf { x } _ { k } ^ { ( l ) }$ of node $k$ to conduct deeper layers of the modality-specific encoder inspired by residual connections [45]. The combination operation between $\hat { \mathbf { x } } _ { k } ^ { ( l ) }$ and x(l)k can be represented as:
+
+$$
+\begin{array} { r } { \phantom { \frac { 1 } { k } } \tilde { \mathbf { x } } _ { k } ^ { ( l ) } = \mathrm { L e a k y R e L U } \left( \mathbf { W } _ { m , 2 } ^ { ( l ) } \cdot \mathbf { x } _ { k } ^ { ( l ) } \right) \phantom { x x x x x x x x x x x x x x } } \\ { \phantom { \frac { 1 } { k } } \mathbf { x } _ { k } ^ { ( l + 1 ) } = \mathrm { L e a k y R e L U } \left( \mathbf { W } _ { m , 3 } ^ { ( l ) } \left( \hat { \mathbf { x } } _ { k } ^ { ( l ) } \| \tilde { \mathbf { x } } _ { k } ^ { ( l ) } \right) \right) , } \end{array}
+$$
+
+where W(l) and W(l)m, are the weight matrix of linear transform layers. xˆ(l)k 2 3is the lth messages from neighbors, and $\tilde { \mathbf { x } } _ { k } ^ { ( l ) }$ is the lth transformed feature representation of itself. LeakyReLU [46] is adopted as the activation function.
+
+The node $k$ can receive messages from its $L$ -hop neighbors after stacking $L$ GCN-based propagation layers, where we obtain x(L)k . Then we use two separate GCN-based layers to learn $\mathbf { Z } _ { m }$ , parameterized by $\pmb { \mu } _ { m }$ and $\log ( { \pmb { \sigma } _ { m } } ^ { 2 } )$ as in variational auto-encoders [21]. These two GCN-based layers remove activation function LeakyReLU in Eq. (6) so as to learn both positive and negative numerics of $\pmb { \mu } _ { m }$ and $\log ( { \pmb { \sigma } _ { m } } ^ { 2 } )$ .
+
+2) Multi-Modal Fusion: A straightforward way to infer approximated posteriors of multi-modal features is to adopt the early fusion strategy [47], which takes the concatenated features from all modalities as input and outputs the parameters of joint feature-based posteriors. However, such an approach can only acquire an entangled uncertainty estimation from concatenated modalities, which fails to distinguish modalities with multiple uncertainty levels. Thus, to infer the joint feature-based latent variables $\mathbf { Z } _ { f }$ based on useful and complementary information from all modalities, we assume the observations of $M$ modalities, $\mathbf { X } _ { 1 } , \ldots , \mathbf { X } _ { M }$ , are conditional independent given $\mathbf { Z } _ { f }$ inspired by [22]. Then the generative model becomes:
+
+$$
+p \left( \mathbf { X } _ { 1 } , \ldots , \mathbf { X } _ { M } | \mathbf { Z } _ { f } \right) = p \left( \mathbf { X } _ { 1 } | \mathbf { Z } _ { f } \right) p \left( \mathbf { X } _ { 2 } | \mathbf { Z } _ { f } \right) \ldots p \left( \mathbf { X } _ { M } | \mathbf { Z } _ { f } \right) .
+$$
+
+Let $\mathbf { X } = \mathbf { X } _ { 1 } , \dots , \mathbf { X } _ { M }$ , and we omit A in the inference and gen1erative models for brevity of writing. The evidence lower bound (ELBO) of log marginal likelihood for all modalities $\mathcal { L } ( \mathbf { X } )$ becomes:
+
+$$
+\mathbb { E } _ { q _ { \phi } ( \mathbf { Z } _ { f } | \mathbf { X } ) } \left[ \sum _ { \mathbf { X } _ { m } \in \mathbf { X } } \log p \left( \mathbf { X } _ { m } | \mathbf { Z } _ { f } \right) \right] - \mathrm { K L } \left[ q _ { \phi } ( \mathbf { Z } _ { f } | \mathbf { X } ) , p ( \mathbf { Z } _ { f } ) \right] .
+$$
+
+Therefore, the problem of tackling the KL divergence term in $\mathcal { L } ( \mathbf { X } )$ comes to resolve the approximated joint featurebased posteriors $q _ { \phi } ( \mathbf { Z } _ { f } | \mathbf { X } )$ . Knowing that the optimal value of $q _ { \phi } ( \mathbf { Z } _ { f } | \mathbf { X } )$ are the true posteriors $p ( \mathbf { Z } _ { f } | \mathbf { X } )$ , we could transform the problem to find the relation among $p ( \mathbf { Z } _ { f } | \mathbf { X } )$ and single-modality posteriors $p _ { \phi } ( \mathbf { Z } _ { f } | \mathbf { X } _ { \mathbf { m } } )$ . Here, with the conditional independence assumption, we have:
+
+$$
+\begin{array} { r l r } {  { p ( \mathbf { Z } _ { f } | \mathbf { X } ) } = \frac { p ( \mathbf { X } | \mathbf { Z } _ { f } ) p ( \mathbf { Z } _ { f } ) } { p ( \mathbf { X } ) } = \frac { p ( \mathbf { Z } _ { f } ) } { p ( \mathbf { X } ) } \prod _ { m = 1 } ^ { M } p ( \mathbf { X } _ { m } | \mathbf { Z } _ { f } ) }  \\ & { } & { = \frac { p ( \mathbf { Z } _ { f } ) } { p ( \mathbf { X } ) } \prod _ { m = 1 } ^ { M } \frac { p ( \mathbf { Z } _ { f } | \mathbf { X } _ { m } ) p ( \mathbf { X } _ { m } ) } { p ( \mathbf { Z } _ { f } ) } . } \end{array}
+$$
+
+Furthermore, based on VAEs, $p ( \mathbf { Z } _ { f } | \mathbf { X } _ { m } )$ could be approximated with $q _ { \phi } ( \mathbf { Z } _ { f } | \mathbf { X } _ { m } ) p ( \mathbf { Z } _ { f } )$ , where $q _ { \phi } ( \mathbf { Z } _ { f } | \mathbf { X } _ { m } )$ are the variational posteriors for the $m$ th modality and $p ( \mathbf { Z } _ { f } )$ are the priors. With this approximation, we can avoid the quotient term and the joint feature-based posteriors become:
+
+$$
+\begin{array} { r l r } {  { p ( \mathbf { Z } _ { f } | \mathbf { X } ) \propto \frac { \prod _ { m = 1 } ^ { M } p ( \mathbf { Z } _ { f } | \mathbf { X } _ { m } ) } { \prod _ { m = 1 } ^ { M - 1 } p ( \mathbf { Z } _ { f } ) } \approx \frac { \prod _ { m = 1 } ^ { M } q _ { \phi } ( \mathbf { Z } _ { f } | \mathbf { X } _ { m } ) p ( \mathbf { Z } _ { f } ) } { \prod _ { m = 1 } ^ { M - 1 } p ( \mathbf { Z } _ { f } ) } \ } } \\ & { } & \\ & { } & { \qquad = p ( \mathbf { Z } _ { f } ) \prod _ { m = 1 } ^ { M } q _ { \phi } ( \mathbf { Z } _ { f } | \mathbf { X } _ { m } ) . \qquad ( 9 } \end{array}
+$$
+
+From this equation, the approximated joint feature-based posteriors are shown to be factorized into a product of modality-specific variational posteriors and we omit the priors $p ( \mathbf { Z } _ { f } )$ for simplification. This derivation would be easily extended to any subset of modalities yielding $q _ { \phi } ( \mathbf { Z } _ { f } | \mathbf { X } _ { S } ) \propto$ $\begin{array} { r } { \prod _ { m = 1 } ^ { | S | } q _ { \phi } ( \mathbf { Z } _ { m } | \mathbf { X } _ { m } ) , S \subset \{ 1 , \ldots , M \} } \end{array}$ which can easily deal =1with modality missing problem.
+
+By using the property of Gaussian distribution, parameters for the joint feature-based latent variables of multiple modalities can be computed by taking the product distribution:
+
+$$
+\begin{array} { r l } & { \mu _ { f } = \frac { \sum _ { m = 1 } ^ { M } \left( \mu _ { m } \odot \left( 1 / \sigma _ { m } ^ { 2 } \right) \right) } { \sum _ { m = 1 } ^ { M } \left( 1 / \sigma _ { m } ^ { 2 } \right) } } \\ & { \sigma _ { f } = \mathrm { s q r t } \left( \frac { 1 } { \sum _ { m = 1 } ^ { M } \left( 1 / \sigma _ { m } ^ { 2 } \right) } \right) , } \end{array}
+$$
+
+where $\pmb { \mu } _ { m }$ and $\pmb { \sigma } _ { m } ^ { 2 }$ are the parameters of the $m$ th Gaussian expert. By applying PoE, the joint feature-based mean vectors $\mu _ { f }$ which represent semantic information are in essence a weighted summation of modality-specific $\pmb { \mu } _ { m }$ with the weight to be the precision $1 / \sigma _ { m } ^ { 2 }$ of each modality. It indicates that for the expert that has lower variance, it contains more useful information for recommendations and has more influence under the joint feature-based representation.
+
+To further exploit the collaborative patterns, we exploit another GCN-based encoder to model interactions between users and items, where we obtain the collaborative-based latent variable $\mathbf { Z } _ { C }$ parameterized by $\pmb { \mu } _ { C }$ and $\sigma _ { C } ^ { 2 }$ . Then we fuse the feature-based and collaborative-based latent embeddings, i.e., $\mathbf { Z } _ { f }$ and $\mathbf { Z } _ { C }$ , with another PoE principle hierarchically. Therefore, the approximated joint posteriors of $\mathbf { Z }$ could be obtained as:
+
+$$
+q _ { \phi } ( { \bf Z } | { \bf X } , { \bf X } _ { C } ) = q _ { \phi } ( { \bf Z } _ { f } | { \bf X } ) q _ { \phi } ( { \bf Z } _ { C } | { \bf X } _ { C } ) ,
+$$
+
+where $\mathbf { X }$ is the multi-modal item features and $\mathbf { X } _ { C }$ is the collaborative-based features which are randomly initialized and propagate with GCN to capture collaborative structures as in [34]. Specifically, the collaborative-based encoder can expressively model of high-order connectivity in the user-item graph, which effectively injects the collaborative signal into the embedding process during the propagation. Moreover, with the PoE module, more collaborative information could be employed for more dense datasets by giving more importance to collaborative-based embeddings during the higher-level PoE fusion. On the other hand, more item feature information could be exploited for more sparse datasets.
+
+# B. Inner Product Decoder
+
+After getting the approximated joint posteriors of $\mathbf { Z }$ which are parameterized by $\pmb { \mu }$ and $\sigma$ , the decoder is aimed at reconstructing the adjacency matrix A such that the learned joint latent embeddings could best predict the interactions between users and items. Now that $\mathbf { Z }$ capture information of users’ preferences of interactions and item features, the similarities between users and items could be calculated by the distance between the joint embeddings of users and items. Here, an inner product between the joint latent embeddings is adopted to decode the adjacency matrix:
+
+$$
+p ( \mathbf { A } | \mathbf { Z } ) = \prod _ { k _ { 1 } = 1 } ^ { N } \prod _ { k _ { 2 } = 1 } ^ { N } \mathbf { z } _ { k _ { 1 } } ^ { \top } \mathbf { z } _ { k _ { 2 } } ,
+$$
+
+where ${ \bf z } _ { k _ { 1 } }$ and ${ \bf z } _ { k _ { 2 } }$ are the latent embeddings for node $k _ { 1 }$ and $k _ { 2 }$ . During training, the latent embedding of node $k$ 1is sampled 2from $\mathcal { N } ( \mathbf { z } _ { k } | \mu _ { k } , \sigma _ { k } ^ { 2 } )$ . The sampling operation is a corruption of the joint latent mean vectors such that they could be more robust to noise. While during testing, the latent embedding is fixed as the learned mean vector $\pmb { \mu } _ { k }$ , which captures the semantic information, to make link predictions [33].
+
+It is worth noting that for sparse datasets, the large variance of the node embeddings may cause the positive inner product of two node embeddings to become negative during the sampling in reparameterization [21] in the training phase, or vice versa. Therefore, a Sigmoid function is added to the latent embeddings before the inner product operation. With the activation function, which maps variables to positive spaces, the inner product operation will be more robust and accurate. While for more dense datasets, the nonlinear mapping function compresses and deforms the original latent space, making the similarity calculation less accurate. Therefore, the Sigmoid function is selectively added to more sparse datasets.
+- Hyperparameter definition: 
+- embedding_size (d): Dimensionality of the latent embeddings for users and items. Controls the representation capacity of MVGAE; fixed to 64 for all datasets in the experiments.
+- num_gcn_layers (L): Depth of the common GCN-based propagation in the modality-specific encoders. Determines how many hops of neighbors are aggregated; typically set between 1 and 3, with L = 2 used by default.
+- beta: Trade-off coefficient between the reconstruction (BPR) term and the KL-divergence regularization in the ELBO-style objective. Controls how much information from item features is allowed into the latent variables; tuned over {0.01, 0.1, 1} and usually set to 1.
+- learning_rate: Step size for the Adam optimizer. Tuned over {0.0001, 0.001, 0.01, 0.1}; typical values are 0.001 (Movies, AliShop) and 0.005 (Electronics).
+- l2_reg (weight_decay): Coefficient of L2 normalization/weight decay on model parameters to prevent overfitting. Searched in {0.0001, 0.001, 0.01, 0.1, 0}, with dataset-specific best choices (e.g., 0.001 or 0.0001).
+- epsilon_std (lambda): Standard deviation of the Gaussian noise used in the reparameterization trick for sampling latent embeddings. Controls corruption strength and robustness; set to 0.1 by default.
+- num_negative_samples: Number of negative items sampled per positive interaction when forming BPR triplets. Default is 1 for most datasets; increased to 10 negatives on Movies to mitigate class imbalance.
+- batch_size: Number of interactions used per optimization step. Fixed to 1024 for all experiments, balancing convergence speed and memory usage.
+
+[Graph Context]
+[Related Methods 1]
+Model: MMGCN_2019
+Idea: MMGCN targets personalized micro-video recommendation where each item has visual, acoustic, and textual content. Existing multimedia recommenders usually fuse all modalities into a single item vector and then apply collaborative filtering, which ignores that users may have different preferences across modalities and that user representations can be improved by propagating content signals over the interaction graph. MMGCN instead builds a separate user–item bipartite graph for each modality and performs message passing on each graph to obtain modality-specific representations of users and micro-videos. An aggregation layer (mean or max pooling with linear transform and nonlinearity) collects neighbors’ features per modality, and a novel combination layer merges (1) structural neighborhood signals, (2) modality-specific intrinsic features, and (3) a shared ID embedding that ties modalities together in a coordinated latent space. Stacking these layers enables MMGCN to capture higher-order connectivity and cross-modal interactions. The final user and item embeddings are obtained by summing over modality-specific embeddings and are trained with a BPR ranking loss on sampled user–positive–negative triplets.
+Relation:
+<COMPARISON_CONTEXT>
+Similarities:
+1. Both build modality-specific GCN-based encoders on the user–item bipartite graph to propagate multi-hop neighborhood signals.
+2. Both start from pre-extracted item content features and trainable user embeddings per modality to learn representations.
+3. Both fuse multi-modal signals into unified user/item embeddings before prediction.
+4. Both score user–item pairs via inner-product similarity.
+
+Differences:
+1. Learning objective: MVGAE optimizes a VAE-style ELBO to reconstruct the adjacency with KL regularization, whereas MMGCN uses BPR pairwise ranking with negative sampling.
+2. Representation fusion: MVGAE models modality-specific Gaussian posteriors and fuses them via Product-of-Experts (precision/uncertainty-weighted) then hierarchically with a collaborative latent (naturally handling missing modalities), while MMGCN learns deterministic vectors coordinated by an ID embedding and sums them across modalities.
+3. Architectural emphasis: MVGAE includes a separate collaborative GCN encoder and hierarchical PoE fusion to explicitly separate feature-based and collaborative factors, while MMGCN relies on per-modality aggregation (mean/max) and combination (concat/element-wise) layers without a dedicated collaborative encoder.
+4. Training/inference mechanics: MVGAE samples via reparameterization during training and may apply a sigmoid to embeddings before inner-product for sparsity robustness, whereas MMGCN trains deterministically with triplet sampling under BPR.
+</COMPARISON_CONTEXT>
+
+[Related Methods 2]
+Model: VBPR_2016
+Idea: Graph-Refined Convolutional Network (GRCN) targets multimedia recommendation with implicit feedback when user–item interactions are modeled as a bipartite graph. The core problem is that implicit logs contain many false-positive behaviors (accidental or weak-interest clicks), which become edges in the graph and are treated as equally reliable. Standard GCN-based recommenders propagate messages over this noisy structure, so multi-hop aggregation mixes true preference signals with spurious ones and degrades user and item embeddings. GRCN proposes to adaptively refine the interaction graph so that likely false-positive edges are down-weighted before graph convolution. Concretely, for each modality (visual, acoustic, textual), it uses a prototypical network with neighbor routing to learn a user preference prototype in a content metric space, then measures affinity between each interacted item and the user prototype in both user-to-item and item-to-user directions. These multimodal affinities are fused using user- and item-specific base vectors and a max operator to produce an edge weight that reflects how confidently the interaction is truly positive. The weighted edges define a refined graph on which a LightGCN-style propagation aggregates messages from neighbors while suppressing noise from low-weight edges. Final user and item representations concatenate refined ID embeddings with modality-specific content representations, and a BPR objective is used to train the model end-to-end on implicit triplets. Experiments on three micro-video datasets (MovieLens trailers, Tiktok, Kwai) show that GRCN consistently outperforms GCN-based and multimodal baselines such as MMGCN, validating that content-driven graph refinement is an effective way to make GCN recommenders robust to noisy implicit feedback. 
+Relation:
+<COMPARISON_CONTEXT>
+Similarities:
+1. Both combine collaborative signals with item content to improve recommendations, particularly for cold-start items.
+2. Both score user–item affinity via an inner product in a learned latent space.
+3. Both train from implicit feedback without explicit labels (self-supervision from interactions).
+
+Differences:
+1. Learning objective: MVGAE is generative (maximizes a VAE-style ELBO to reconstruct the adjacency with KL regularization), whereas VBPR is discriminative (optimizes pairwise BPR ranking with negative sampling).
+2. Architecture: MVGAE uses modality-specific GCN encoders and hierarchical product-of-experts fusion with reparameterized Gaussian latents; VBPR is a shallow MF model augmenting factors with a linear visual embedding and no uncertainty or message passing.
+3. Multimodal handling: MVGAE supports arbitrary modalities and missing-modality robustness via PoE (precision-weighted fusion); VBPR uses a single visual modality (fixed CNN features) fused additively.
+4. Collaborative modeling: MVGAE explicitly captures high-order graph connectivity with a dedicated collaborative encoder; VBPR models only first-order interactions via dot-products without graph propagation.
+</COMPARISON_CONTEXT>
+Example Python Code:
+<REFERENCE_CODE_ID="VBPR_2016">
+# coding: utf-8
+# @email: enoche.chow@gmail.com
+r"""
+VBPR -- Recommended version
+################################################
+Reference:
+VBPR: Visual Bayesian Personalized Ranking from Implicit Feedback -Ruining He, Julian McAuley. AAAI'16
+"""
+import numpy as np
+import os
+import torch
+import torch.nn as nn
+
+from common.abstract_recommender import GeneralRecommender
+from common.loss import BPRLoss, EmbLoss
+from common.init import xavier_normal_initialization
+import torch.nn.functional as F
+
+
+class VBPR(GeneralRecommender):
+    r"""BPR is a basic matrix factorization model that be trained in the pairwise way.
+    """
+    def __init__(self, config, dataloader):
+        super(VBPR, self).__init__(config, dataloader)
+
+        # load parameters info
+        self.u_embedding_size = self.i_embedding_size = config['embedding_size']
+        self.reg_weight = config['reg_weight']  # float32 type: the weight decay for l2 normalizaton
+
+        # define layers and loss
+        self.u_embedding = nn.Parameter(nn.init.xavier_uniform_(torch.empty(self.n_users, self.u_embedding_size * 2)))
+        self.i_embedding = nn.Parameter(nn.init.xavier_uniform_(torch.empty(self.n_items, self.i_embedding_size)))
+        if self.v_feat is not None and self.t_feat is not None:
+            self.item_raw_features = torch.cat((self.t_feat, self.v_feat), -1)
+        elif self.v_feat is not None:
+            self.item_raw_features = self.v_feat
+        else:
+            self.item_raw_features = self.t_feat
+
+        self.item_linear = nn.Linear(self.item_raw_features.shape[1], self.i_embedding_size)
+        self.loss = BPRLoss()
+        self.reg_loss = EmbLoss()
+
+        # parameters initialization
+        self.apply(xavier_normal_initialization)
+
+    def get_user_embedding(self, user):
+        r""" Get a batch of user embedding tensor according to input user's id.
+
+        Args:
+            user (torch.LongTensor): The input tensor that contains user's id, shape: [batch_size, ]
+
+        Returns:
+            torch.FloatTensor: The embedding tensor of a batch of user, shape: [batch_size, embedding_size]
+        """
+        return self.u_embedding[user, :]
+
+    def get_item_embedding(self, item):
+        r""" Get a batch of item embedding tensor according to input item's id.
+
+        Args:
+            item (torch.LongTensor): The input tensor that contains item's id, shape: [batch_size, ]
+
+        Returns:
+            torch.FloatTensor: The embedding tensor of a batch of item, shape: [batch_size, embedding_size]
+        """
+        return self.item_embedding[item, :]
+
+    def forward(self, dropout=0.0):
+        item_embeddings = self.item_linear(self.item_raw_features)
+        item_embeddings = torch.cat((self.i_embedding, item_embeddings), -1)
+
+        user_e = F.dropout(self.u_embedding, dropout)
+        item_e = F.dropout(item_embeddings, dropout)
+        return user_e, item_e
+
+    def calculate_loss(self, interaction):
+        """
+        loss on one batch
+        :param interaction:
+            batch data format: tensor(3, batch_size)
+            [0]: user list; [1]: positive items; [2]: negative items
+        :return:
+        """
+        user = interaction[0]
+        pos_item = interaction[1]
+        neg_item = interaction[2]
+
+        user_embeddings, item_embeddings = self.forward()
+        user_e = user_embeddings[user, :]
+        pos_e = item_embeddings[pos_item, :]
+        #neg_e = self.get_item_embedding(neg_item)
+        neg_e = item_embeddings[neg_item, :]
+        pos_item_score, neg_item_score = torch.mul(user_e, pos_e).sum(dim=1), torch.mul(user_e, neg_e).sum(dim=1)
+        mf_loss = self.loss(pos_item_score, neg_item_score)
+        reg_loss = self.reg_loss(user_e, pos_e, neg_e)
+        loss = mf_loss + self.reg_weight * reg_loss
+        return loss
+
+    def full_sort_predict(self, interaction):
+        user = interaction[0]
+        user_embeddings, item_embeddings = self.forward()
+        user_e = user_embeddings[user, :]
+        all_item_e = item_embeddings
+        score = torch.matmul(user_e, all_item_e.transpose(0, 1))
+        return score
+
+</REFERENCE_CODE_ID>
+Example YAML Config:
+<REFERENCE_CONFIG_ID="VBPR_2016">
+embedding_size: 64
+reg_weight: [2.0, 1.0, 1e-01, 1e-02, 1e-03, 1e-04, 1e-05]
+hyper_parameters: ["reg_weight"]
+
+</REFERENCE_CONFIG_ID>
+
+[File Paths] (only these two files are allowed)
+- Model code: /data2/liyu/llh/rn/MMRec_2/src/models/mvgae.py
+- Hyperparam config: /data2/liyu/llh/rn/MMRec_2/src/configs/model/MVGAE.yaml
+
+[Hyperparam Constraint]
+- Prefer fixed values; at most 3 hyperparameters for grid search. Keep the search space small.
+
+Steps (must use the ReAct toolchain):
+1) Do shape inference (inputs/outputs/modules) in natural language.
+2) Generate/update code and config; write via write/patch tools to the paths above.
+3) If system logs show errors, fix the root cause per the paper (do not suppress errors); then stop and wait for the next log.
+4) End with a brief summary of key changes, fidelity to the paper, and any remaining gaps.
+

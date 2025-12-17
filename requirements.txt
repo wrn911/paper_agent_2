@@ -1,0 +1,18 @@
+# requirements.txt
+# List of python dependencies
+
+# Core framework for language model interactions
+langchain==0.1.13
+langchain-openai==0.1.1
+
+# For local token counting
+tiktoken
+
+# For tensor computations and deep learning
+torch
+
+# For graph data structures and algorithms
+networkx
+
+# For YAML file parsing
+PyYAML

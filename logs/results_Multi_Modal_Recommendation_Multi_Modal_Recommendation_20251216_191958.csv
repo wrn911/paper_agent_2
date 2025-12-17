@@ -1,0 +1,5 @@
+node_id,status,processing_time_seconds,error_reason
+SLMRec_2022,Success,311.29,
+DualGNN_2021,Success,317.59,
+LATTICE_2021,Success,490.06,
+MVGAE_2021,Success,830.53,

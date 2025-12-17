@@ -1,0 +1,1210 @@
+2025-12-16 19:19:58 - INFO - Worker starting with 1 nodes.
+2025-12-16 19:19:58 - INFO - Starting train task for 1 nodes.
+2025-12-16 19:19:58 - INFO - [SLMRec] System prompt: 
+You are a paper-reproduction ReAct agent. Primary goal: faithfully implement the paper. Do not hide errors; use smoke-test feedback to fix root causes.
+
+[Tools & Permissions]
+- Only use the provided tools: read/write allowed files, apply patches to allowed files.
+- You may ONLY read/write the two specific files of the current paper: the model code file and the hyperparameter file. Everything else is forbidden.
+- You cannot execute shell commands yourself; the system will run the benchmark command and return the log.
+
+[Required Workflow]
+- Start with a mental shape/module check (inputs, outputs, losses, data flow).
+- Implement the paper as described; if the paper is ambiguous, state minimal assumptions inline as comments/config choices.
+- Write code + config to the given paths via tools (no raw code in replies).
+- Treat failing smoke tests as signals: inspect logs, fix the cause per paper intent, and re-write files. Do not wrap or silence errors to pass.
+- Avoid broad try/except; prefer explicit, narrow error handling only when the paper implies it.
+- Conclude with brief changes + whether tests (if any) were run/passed; note any remaining deviations from the paper.
+
+[Delivery Requirements]
+- Prioritize paper fidelity over “just running.” Keep hyperparameter search minimal and defaults reasonable.
+- Maintain device consistency; keep replies brief; no large code dumps in replies (write files instead).
+
+[Global Knowledge]
+- Use only generalizable tips from the knowledge base; ignore dataset-specific or misleading items unless explicitly applicable.
+- Current knowledge:
+
+
+2025-12-16 19:19:58 - INFO - [SLMRec] Attempt 1 user prompt: 
+Goal: Using paper info and graph context, implement the model code + hyperparameter file at the specified paths. If the paper is unclear, make the smallest explicit assumptions (comment them). System tests may run later and return logs to guide fixes—do not mask errors to “pass.”
+
+[Paper Node]
+- Title: SLMRec_2022
+- Method name: SLMRec
+- Core idea: SLMRec introduces a self-supervised learning (SSL) approach for multimedia recommendation. It overcomes limitations of traditional supervised learning methods by incorporating self-supervised tasks to uncover multi-modal patterns in the data. The method utilizes data augmentation and contrastive learning to improve the quality of item representations by capturing underlying relationships between different modalities (e.g., visual, acoustic, textual). The proposed model, which uses graph neural networks (GNNs) for the recommendation task, enhances user-item interactions by learning multi-modal patterns through multi-task learning, enabling better recommendation accuracy and robustness, especially in cold-start scenarios.
+- Method description: 
+# III. METHODOLOGY
+
+We present a multi-task learning framework for multimedia recommendation, which fuses various modal information into user and item representations and distills the multi-modal patterns. Fig. 2 illustrates the model architecture of SLMRec. Here we consider four modalities (i.e., visual, acoustic, textual, and ID embeddings) serving as the basic input of the model and design three SSL tasks, which can be classified as modal-agnostic tasks and the modal-specific task. Especially, we leverage a multi-task strategy to improve the recommendation, where the graph-based recommender serves as the main task (see Section II) and SSL serves as the auxiliary task.
+
+# A. Self-Supervised Learning
+
+Different from supervised learning, SSL is used to distill potential information in unlabelled data. Inspired by the Masked Modeling in BERT [13] and Two-Tower [17], we treat each modality as an independent feature and design two modalagnostic tasks (i.e., FD, FM). On the other hand, we consider modality specificity and relations between modalities to design a modal-specific task (i.e., FAC).
+
+1) Modal-Agnostic Task: We process features through a generic scheme (e.g., masking) to generate multiple views for a node, which can be formulated as:
+
+$$
+Z _ { m } ^ { \prime } = H ( t ^ { \prime } ( E _ { m } ) , \mathcal { G } _ { m } ) , Z _ { m } ^ { \prime \prime } = H ( t ^ { \prime \prime } ( E _ { m } ) , \mathcal { G } _ { m } ) , t , t ^ { \prime } t ^ { \prime \prime } \sim \mathcal { T } ,
+$$
+
+![](images/4e46f6a8654394f3654c6e921265fb3a4eeff857bb4c6f46339b26a2c54383c0.jpg)  
+Fig. 2. The diagram depicts the main components under the multi-task strategy. The first layer represents the flow of the main task, and the next layers represent our self-supervised tasks, depicting modal-agnostic tasks and the modal-specific task, respectively.
+
+where the mono-modal features augmented by two stochastic transformations (i.e., $t ^ { \prime }$ and $t ^ { \prime \prime }$ ), from the same family of augmentations $\mathcal { T }$ , are fed into the graph encoder to produce the final representations $Z _ { m } ^ { \prime }$ and $Z _ { m } ^ { \prime \prime }$ . After that, for every item in each modality, we construct a positive pair defined as $( z _ { i , m } ^ { \prime } , z _ { i , m } ^ { \prime \prime } )$ and negative pairs defined as $( z _ { i , m } ^ { \prime } , z _ { j , m } ^ { \prime \prime } )$ for $i \neq j$ . Especially, the modal-agnostic transformations $t$ =, which create two augmented examples by masking part of the information, can be formulated as:
+
+$$
+t ( E ) = M \odot E ,
+$$
+
+where $M$ and $E$ denote the masking matrix and item features, respectively. The inner production $\odot$ of them produce the augmented example. In terms of the granularities of the masking part, we apply two masking patterns as our transformations.
+
+- Feature Dropout: With a certain probability, we dropout every factor of the modal and build multiple broken views of features for contrastive learning to improve model robustness. Feature Masking: We stochastically mask one modality of items and generate two subsets of modalities. In this work, we encourage maximizing the mutual information between modalities.
+
+Hence, we define the SSL loss on modality-agnostic tasks within the augmented embeddings:
+
+$$
+\mathcal { L } _ { s s l } = - \log \frac { \exp ( \sin ( z _ { i } ^ { \prime } , z _ { i } ^ { \prime \prime } ) / \tau _ { s s l } ) } { \sum _ { j } ^ { N } \exp ( \sin ( z _ { i } ^ { \prime } , z _ { j } ^ { \prime \prime } ) / \tau _ { s s l } ) } ,
+$$
+
+where $\mathrm { s i m } ( \cdot )$ measures the similarity between the two vectors, ( )and cosine similarity function is applied to that; $\tau$ is a tunable hyperparameter of temperature and $N$ denotes the number of examples in a batch.
+
+Note that we design factor and modality granularity masking, where we call factor granularity masking as FD and modality granularity masking as FM. We provide a more specific explanation in Fig. 2. For four modalities of a given item, FD fades the node color to present the dropout process of all modalities while FM discards one node to present the masking process of a specific modality. In terms of granularity, FM further uncovers the relationship between modalities, as different modalities can be compared to maximize the mutual information that alleviates the inconsistency in modal fusion. However, conventional masking treats each modal independently and does not respect modal specificity. Next, we consider the modal-specific tasks to enforce modalities’ consistency.
+
+2) Modal-Specific Task: We generally process modalities in separate channels and fuse them through naive combinations (e.g., concatenation, and addition). As we mentioned in the previous Section III-A1, intra-modal masking facilitates modal fusion but does not respect modal specificity. Hence, we hope to (1) distinguish each modality’s specificity, and (2) conduct comparisons for each modality with all other modalities as much as possible for improving multi-modal recommendation. To address the above issues, we consider the treatment of different granularity spaces in multi-modal versatile network [18] to construct modal alignments based on spatial transformations.
+
+Before alignment is performed, we encode original modality features by graph-based encoder the same as the main task. Given the mono-modal representations of items, we apply the projection head as the spatial transformation which can be defined as:
+
+$$
+z _ { m  s ^ { \prime } } = g _ { m  s ^ { \prime } } ( z _ { m } ) , z _ { s ^ { \prime }  s ^ { \prime \prime } } = g _ { s ^ { \prime }  s ^ { \prime \prime } } ( z _ { m  s ^ { \prime } } ) ,
+$$
+
+where $m , s ^ { \prime }$ , and $s ^ { \prime \prime }$ are different spaces, especially, $m$ denotes the space $S _ { m }$ of each modality here. $g _ { m  s ^ { \prime } }$ and $g _ { s ^ { \prime }  s ^ { \prime \prime } }$ are simple projections to obtain the embedding $z _ { m  s ^ { \prime } }$ and $z _ { s ^ { \prime }  s ^ { \prime \prime } }$ , respectively.
+
+Considering the granularity and maneuverability of each modality, we take ID as the dominant embedding and directly align the visual, acoustic, and textual embeddings with ID embeddings in different navigable spaces respectively, which is illustrated in Fig. 2.
+
+Following this idea, we propose a multi-layer granularity space corresponding to the different modalities: in the first level of granularity space $( S _ { i d \cdot v } )$ the visual embeddings and the ID embeddings are compared, while in the second level of granularity space $( S _ { i d \cdot v \cdot a } )$ the acoustic embeddings are compared with the ID embeddings and the visual embeddings, and the textual embeddings compared with the other modal embeddings in the last level of granularity space $( S _ { i d \cdot v \cdot a \cdot t } )$ . Note that the acoustic embeddings and visual embeddings are not compared directly. However, with the help of spatial transformation strategy that allows the visual embeddings to be projected into space $S _ { i d \cdot v \cdot a }$ by $g _ { i d \cdot v  i d \cdot v \cdot a } \circ g _ { v  i d \cdot v }$ and acoustic embedding and visual embedding to be indirectly aligned based on the alignments with ID embeddings.
+
+Algorithm 1: Multi-task Learning of SLMRec-FAC.   
+
+<table><tr><td colspan="2">data:user-item interactions and multi-modal features hyperparameters:T,Tssl,α,λ initialization; while not converge do foreach epoch do Perform Eq.1 to encode modalities foreachbatch do Evaluate Lmain according to Eq. 13 Perform Eq.1O for spatial transformations Evaluate Lssl according to Eq. 11 Evaluate L according to Eq.14 Update parameters end end end</td></tr></table>
+
+Hence, we define multiple InfoNCE losses [19] of direct alignments and sum them up, which can be formulated as:
+
+$$
+\begin{array} { r l } & { \mathcal { L } _ { s s l } = - \displaystyle \sum _ { m \in \mathcal { M } \propto \{ i d \} } \log } \\ & { \quad \quad \quad \quad \quad \quad \quad \quad \quad \quad \quad \quad \quad \quad \quad \quad \quad \quad \quad \quad } \\ & { \quad \quad \quad \quad \quad \quad \quad \quad \frac { \displaystyle \exp ( \sin ( z _ { i , i d \to s _ { m } } , z _ { i , m  s _ { m } } ) / \tau _ { s s l } ) } { \displaystyle \sum _ { j \in [ N ] } \exp ( \sin ( z _ { i , i d  s _ { m } } , z _ { j , m  s _ { m } } ) / \tau _ { s s l } ) } , } \end{array}
+$$
+
+where $s _ { m }$ denotes the space for contrastive learning between the modality $m$ and $\mathrm { I D }$ (e.g., $s _ { a }$ means the space $S _ { i d \cdot v \cdot a }$ ).
+
+# B. Multi-Task Strategy
+
+To improve the recommendation result, we leverage the multitask strategy to tackle sparse supervision signal problems and improve representation learning.
+
+1) Contrastive Pairwise Learning: We sample one observed interaction as $( u , i )$ , and then randomly sample $k$ items, which ( )have not been interacted with $u ( e . g . , \ j _ { 1 } , j _ { 2 } , . . . , j _ { k } )$ . Thus, we establish the positive and negative pairs, which can be formulated as:
+
+$$
+( u , i ) , ( u , j _ { 1 } ) , ( u , j _ { 2 } ) , . . . , ( u , j _ { k } ) .
+$$
+
+Here, we use LightGCN [1] as the backbone of the graph-based encoder for independently producing representations in terms of modalities. We abandon the classic BPR loss [3] as the main objective loss. Instead, we choose InfoNCE to maximize the agreement of positive pairs and minimize that of negative pairs, which can be defined as:
+
+$$
+\mathcal { L } _ { m a i n } = - \log \frac { \exp { ( \sin ( z _ { u } ^ { \top } z _ { i } ) / \tau ) } } { \sum _ { j \in N _ { u } } \exp { ( \sin ( z _ { u } ^ { \top } z _ { j } ) / \tau ) } } ,
+$$
+
+TABLE I THE STATISTICS OF THE EVALUATION DATASET. V, A, AND T DENOTE THE FEATURE DIMENSIONS OF VISUAL, ACOUSTIC, AND TEXTUAL MODALITIES, RESPECTIVELY   
+
+<table><tr><td>Dataset</td><td>Inter.#</td><td>User.#</td><td>Item.#</td><td>V</td><td>A</td><td>T</td></tr><tr><td>Tiktok</td><td>564,365</td><td>36.638</td><td>71,494</td><td>256</td><td>128</td><td>128</td></tr><tr><td>Kwai</td><td>235,918</td><td>7,010</td><td>80.986</td><td>2,048</td><td>，</td><td>1</td></tr><tr><td>Movielens</td><td>1,184,023</td><td>55,485</td><td>5,986</td><td>2,048</td><td>128</td><td>100</td></tr></table>
+
+2) Optimization: We simultaneously optimize the model by joint the main task and SSL task as followed:
+
+$$
+\mathcal { L } = \mathcal { L } _ { m a i n } + \alpha \mathcal { L } _ { s s l } + \lambda \| \Theta \| _ { 2 } ^ { 2 } ,
+$$
+
+where $\alpha$ and $\lambda$ are hyperparameters to adjust the balance between multiple tasks and the strengths of $L _ { 2 }$ regularization. We perform the multi-task optimization of SLMRec-FAC by Algorithm 1. SLMRec-FD and SLMRec-FM follow a similar workflow.
+- Hyperparameter definition: 
+- tau_ssl: The temperature parameter for the contrastive learning loss, typical values range from {0.1, 0.2, 0.5, 1.0}.
+- alpha: The weight for balancing the multi-task learning objectives, typically set in {0.01, 0.05, 0.1, 1.0}.
+- lambda: The L2 regularization coefficient, typical values are {0.0001, 0.001, 0.01}.
+- batch_size: The batch size for training the model, common values are {128, 256, 512, 1024, 2048}.
+- learning_rate: The learning rate for optimization, commonly set to {0.0001, 0.001, 0.01}.
+- embedding_size: The size of the embedding vectors for users and items, usually set to 64.
+
+[Graph Context]
+[Related Methods 1]
+Model: VBPR_2016
+Idea: Graph-Refined Convolutional Network (GRCN) targets multimedia recommendation with implicit feedback when user–item interactions are modeled as a bipartite graph. The core problem is that implicit logs contain many false-positive behaviors (accidental or weak-interest clicks), which become edges in the graph and are treated as equally reliable. Standard GCN-based recommenders propagate messages over this noisy structure, so multi-hop aggregation mixes true preference signals with spurious ones and degrades user and item embeddings. GRCN proposes to adaptively refine the interaction graph so that likely false-positive edges are down-weighted before graph convolution. Concretely, for each modality (visual, acoustic, textual), it uses a prototypical network with neighbor routing to learn a user preference prototype in a content metric space, then measures affinity between each interacted item and the user prototype in both user-to-item and item-to-user directions. These multimodal affinities are fused using user- and item-specific base vectors and a max operator to produce an edge weight that reflects how confidently the interaction is truly positive. The weighted edges define a refined graph on which a LightGCN-style propagation aggregates messages from neighbors while suppressing noise from low-weight edges. Final user and item representations concatenate refined ID embeddings with modality-specific content representations, and a BPR objective is used to train the model end-to-end on implicit triplets. Experiments on three micro-video datasets (MovieLens trailers, Tiktok, Kwai) show that GRCN consistently outperforms GCN-based and multimodal baselines such as MMGCN, validating that content-driven graph refinement is an effective way to make GCN recommenders robust to noisy implicit feedback. 
+Relation:
+<COMPARISON_CONTEXT>
+Similarities:
+1. Both combine collaborative signals with item content embeddings to mitigate cold-start.
+2. Both learn user/item embeddings trained with sampled negatives on implicit feedback in a pairwise-ranking spirit.
+3. Both project raw content features into a learned latent space before combining with ID-based representations.
+
+Differences:
+1. Objective/training: VBPR uses supervised BPR loss only; SLMRec replaces BPR with InfoNCE for the main task and adds auxiliary SSL losses (feature dropout/masking and cross-modal alignment).
+2. Architecture: VBPR is shallow MF with a linear visual embedding and no graph; SLMRec uses a LightGCN encoder per modality plus projection heads and multi-task training.
+3. Modality handling/fusion: VBPR uses only visual features added to ID factors; SLMRec models four modalities separately, aligns them in ID-anchored spaces, and contrasts both intra-modal augmented views and inter-modal pairs.
+4. Data augmentation and negatives: VBPR has no data augmentation and uses standard negative sampling per user; SLMRec creates multiple augmented views via factor- and modality-level masking and uses in-batch InfoNCE denominators for both main and SSL.
+</COMPARISON_CONTEXT>
+
+[Related Methods 2]
+Model: MMGCN_2019
+Idea: MMGCN targets personalized micro-video recommendation where each item has visual, acoustic, and textual content. Existing multimedia recommenders usually fuse all modalities into a single item vector and then apply collaborative filtering, which ignores that users may have different preferences across modalities and that user representations can be improved by propagating content signals over the interaction graph. MMGCN instead builds a separate user–item bipartite graph for each modality and performs message passing on each graph to obtain modality-specific representations of users and micro-videos. An aggregation layer (mean or max pooling with linear transform and nonlinearity) collects neighbors’ features per modality, and a novel combination layer merges (1) structural neighborhood signals, (2) modality-specific intrinsic features, and (3) a shared ID embedding that ties modalities together in a coordinated latent space. Stacking these layers enables MMGCN to capture higher-order connectivity and cross-modal interactions. The final user and item embeddings are obtained by summing over modality-specific embeddings and are trained with a BPR ranking loss on sampled user–positive–negative triplets.
+Relation:
+<COMPARISON_CONTEXT>
+Similarities:
+1. Both build per-modality user–item graphs and learn modality-specific user/item representations via graph-based message passing.
+2. Both coordinate modalities through an ID embedding space, using projections to make modal features comparable.
+3. Both train on implicit feedback with pairwise comparisons of positive vs. sampled negative items.
+
+Differences:
+1. Learning objective: SLMRec adopts InfoNCE for the main recommendation loss and adds auxiliary SSL losses, whereas MMGCN uses only BPR without any self-supervision.
+2. Training paradigm: SLMRec relies on view generation via masking (feature dropout and whole-modality masking) and contrastive learning with in-batch negatives; MMGCN has no augmentation and samples (u,i,i') triplets for BPR.
+3. Architecture: MMGCN designs explicit aggregation and combination layers per modality (with mean/max neighbor pooling and ID-coordinated fusion), while SLMRec uses a LightGCN backbone per modality plus projection heads solely for cross-modal alignment in hierarchical spaces.
+4. Fusion philosophy: MMGCN deterministically fuses modal signals in the forward pass (layer-wise combination and final summation), whereas SLMRec enforces cross-modal consistency via contrastive alignment to ID (including staged id·v → id·v·a → id·v·a·t alignment) and leaves fusion largely to the encoder and contrastive objectives.
+</COMPARISON_CONTEXT>
+Example Python Code:
+<REFERENCE_CODE_ID="MMGCN_2019">
+# coding: utf-8
+"""
+MMGCN: Multi-modal Graph Convolution Network for Personalized Recommendation of Micro-video. 
+In ACM MM`19,
+"""
+
+import os
+import numpy as np
+import scipy.sparse as sp
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from torch_geometric.nn.conv import MessagePassing
+from torch_geometric.utils import remove_self_loops, add_self_loops, degree
+import torch_geometric
+
+from common.abstract_recommender import GeneralRecommender
+from common.loss import BPRLoss, EmbLoss
+from common.init import xavier_uniform_initialization
+
+
+class MMGCN(GeneralRecommender):
+    def __init__(self, config, dataset):
+        super(MMGCN, self).__init__(config, dataset)
+        self.num_user = self.n_users
+        self.num_item = self.n_items
+        num_user = self.n_users
+        num_item = self.n_items
+        dim_x = config['embedding_size']
+        num_layer = config['n_layers']
+        batch_size = config['train_batch_size']         # not used
+        self.aggr_mode = 'mean'
+        self.concate = 'False'
+        has_id = True
+        self.weight = torch.tensor([[1.0], [-1.0]]).to(self.device)
+        self.reg_weight = config['reg_weight']
+
+        # packing interaction in training into edge_index
+        train_interactions = dataset.inter_matrix(form='coo').astype(np.float32)
+        edge_index = torch.tensor(self.pack_edge_index(train_interactions), dtype=torch.long)
+        self.edge_index = edge_index.t().contiguous().to(self.device)
+        self.edge_index = torch.cat((self.edge_index, self.edge_index[[1, 0]]), dim=1)
+        self.num_modal = 0
+
+        if self.v_feat is not None:
+            self.v_gcn = GCN(self.edge_index, batch_size, num_user, num_item, self.v_feat.size(1), dim_x, self.aggr_mode,
+                             self.concate, num_layer=num_layer, has_id=has_id, dim_latent=256, device=self.device)
+            self.num_modal += 1
+
+        if self.t_feat is not None:
+            self.t_gcn = GCN(self.edge_index, batch_size, num_user, num_item, self.t_feat.size(1), dim_x,
+                             self.aggr_mode, self.concate, num_layer=num_layer, has_id=has_id, device=self.device)
+            self.num_modal += 1
+
+        self.id_embedding = nn.init.xavier_normal_(torch.rand((num_user+num_item, dim_x), requires_grad=True)).to(self.device)
+        self.result = nn.init.xavier_normal_(torch.rand((num_user + num_item, dim_x))).to(self.device)
+
+    def pack_edge_index(self, inter_mat):
+        rows = inter_mat.row
+        cols = inter_mat.col + self.n_users
+        # ndarray([598918, 2]) for ml-imdb
+        return np.column_stack((rows, cols))
+
+    def forward(self):
+        representation = None
+        if self.v_feat is not None:
+            representation = self.v_gcn(self.v_feat, self.id_embedding)
+        if self.t_feat is not None:
+            if representation is None:
+                representation = self.t_gcn(self.t_feat, self.id_embedding)
+            else:
+                representation += self.t_gcn(self.t_feat, self.id_embedding)
+
+        representation /= self.num_modal
+
+        self.result = representation
+        return representation
+
+    def calculate_loss(self, interaction):
+        batch_users = interaction[0]
+        pos_items = interaction[1] + self.n_users
+        neg_items = interaction[2] + self.n_users
+
+        user_tensor = batch_users.repeat_interleave(2)
+        stacked_items = torch.stack((pos_items, neg_items))
+        item_tensor = stacked_items.t().contiguous().view(-1)
+
+        out = self.forward()
+        user_score = out[user_tensor]
+        item_score = out[item_tensor]
+        score = torch.sum(user_score * item_score, dim=1).view(-1, 2)
+        loss = -torch.mean(torch.log(torch.sigmoid(torch.matmul(score, self.weight))))
+        reg_embedding_loss = (self.id_embedding[user_tensor]**2 + self.id_embedding[item_tensor]**2).mean()
+        if self.v_feat is not None:
+            reg_embedding_loss += (self.v_gcn.preference**2).mean()
+        reg_loss = self.reg_weight * reg_embedding_loss
+        return loss + reg_loss
+
+    def full_sort_predict(self, interaction):
+        user_tensor = self.result[:self.n_users]
+        item_tensor = self.result[self.n_users:]
+
+        temp_user_tensor = user_tensor[interaction[0], :]
+        score_matrix = torch.matmul(temp_user_tensor, item_tensor.t())
+        return score_matrix
+
+
+class GCN(torch.nn.Module):
+    def __init__(self, edge_index, batch_size, num_user, num_item, dim_feat, dim_id, aggr_mode, concate, num_layer,
+                 has_id, dim_latent=None, device='cpu'):
+        super(GCN, self).__init__()
+        self.batch_size = batch_size
+        self.num_user = num_user
+        self.num_item = num_item
+        self.dim_id = dim_id
+        self.dim_feat = dim_feat
+        self.dim_latent = dim_latent
+        self.edge_index = edge_index
+        self.aggr_mode = aggr_mode
+        self.concate = concate
+        self.num_layer = num_layer
+        self.has_id = has_id
+        self.device = device
+
+        if self.dim_latent:
+            self.preference = nn.init.xavier_normal_(torch.rand((num_user, self.dim_latent), requires_grad=True)).to(self.device)
+            #self.preference = nn.Parameter(nn.init.xavier_normal_(torch.rand((num_user, self.dim_latent))))
+
+            self.MLP = nn.Linear(self.dim_feat, self.dim_latent)
+            self.conv_embed_1 = BaseModel(self.dim_latent, self.dim_latent, aggr=self.aggr_mode)
+            nn.init.xavier_normal_(self.conv_embed_1.weight)
+            self.linear_layer1 = nn.Linear(self.dim_latent, self.dim_id)
+            nn.init.xavier_normal_(self.linear_layer1.weight)
+            self.g_layer1 = nn.Linear(self.dim_latent + self.dim_id, self.dim_id) if self.concate else nn.Linear(
+                self.dim_latent, self.dim_id)
+            nn.init.xavier_normal_(self.g_layer1.weight)
+
+        else:
+            self.preference = nn.init.xavier_normal_(torch.rand((num_user, self.dim_feat), requires_grad=True)).to(self.device)
+            #self.preference = nn.Parameter(nn.init.xavier_normal_(torch.rand((num_user, self.dim_feat))))
+
+            self.conv_embed_1 = BaseModel(self.dim_feat, self.dim_feat, aggr=self.aggr_mode)
+            nn.init.xavier_normal_(self.conv_embed_1.weight)
+            self.linear_layer1 = nn.Linear(self.dim_feat, self.dim_id)
+            nn.init.xavier_normal_(self.linear_layer1.weight)
+            self.g_layer1 = nn.Linear(self.dim_feat + self.dim_id, self.dim_id) if self.concate else nn.Linear(
+                self.dim_feat, self.dim_id)
+            nn.init.xavier_normal_(self.g_layer1.weight)
+
+        self.conv_embed_2 = BaseModel(self.dim_id, self.dim_id, aggr=self.aggr_mode)
+        nn.init.xavier_normal_(self.conv_embed_2.weight)
+        self.linear_layer2 = nn.Linear(self.dim_id, self.dim_id)
+        nn.init.xavier_normal_(self.linear_layer2.weight)
+        self.g_layer2 = nn.Linear(self.dim_id + self.dim_id, self.dim_id) if self.concate else nn.Linear(self.dim_id,
+                                                                                                         self.dim_id)
+
+        self.conv_embed_3 = BaseModel(self.dim_id, self.dim_id, aggr=self.aggr_mode)
+        nn.init.xavier_normal_(self.conv_embed_3.weight)
+        self.linear_layer3 = nn.Linear(self.dim_id, self.dim_id)
+        nn.init.xavier_normal_(self.linear_layer3.weight)
+        self.g_layer3 = nn.Linear(self.dim_id + self.dim_id, self.dim_id) if self.concate else nn.Linear(self.dim_id,
+                                                                                                         self.dim_id)
+
+    def forward(self, features, id_embedding):
+        temp_features = self.MLP(features) if self.dim_latent else features
+
+        x = torch.cat((self.preference, temp_features), dim=0)
+        x = F.normalize(x)
+
+        h = F.leaky_relu(self.conv_embed_1(x, self.edge_index))  # equation 1
+        x_hat = F.leaky_relu(self.linear_layer1(x)) + id_embedding if self.has_id else F.leaky_relu(
+            self.linear_layer1(x))  # equation 5
+        x = F.leaky_relu(self.g_layer1(torch.cat((h, x_hat), dim=1))) if self.concate else F.leaky_relu(
+            self.g_layer1(h) + x_hat)
+
+        h = F.leaky_relu(self.conv_embed_2(x, self.edge_index))  # equation 1
+        x_hat = F.leaky_relu(self.linear_layer2(x)) + id_embedding if self.has_id else F.leaky_relu(
+            self.linear_layer2(x))  # equation 5
+        x = F.leaky_relu(self.g_layer2(torch.cat((h, x_hat), dim=1))) if self.concate else F.leaky_relu(
+            self.g_layer2(h) + x_hat)
+
+        h = F.leaky_relu(self.conv_embed_3(x, self.edge_index))  # equation 1
+        x_hat = F.leaky_relu(self.linear_layer3(x)) + id_embedding if self.has_id else F.leaky_relu(
+            self.linear_layer3(x))  # equation 5
+        x = F.leaky_relu(self.g_layer3(torch.cat((h, x_hat), dim=1))) if self.concate else F.leaky_relu(
+            self.g_layer3(h) + x_hat)
+
+        return x
+
+
+class BaseModel(MessagePassing):
+    def __init__(self, in_channels, out_channels, normalize=True, bias=True, aggr='add', **kwargs):
+        super(BaseModel, self).__init__(aggr=aggr, **kwargs)
+        self.aggr = aggr
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.normalize = normalize
+        self.weight = nn.Parameter(torch.Tensor(self.in_channels, out_channels))
+
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        torch_geometric.nn.inits.uniform(self.in_channels, self.weight)
+
+    def forward(self, x, edge_index, size=None):
+        x = torch.matmul(x, self.weight)
+        return self.propagate(edge_index, size=(x.size(0), x.size(0)), x=x)
+
+    def message(self, x_j, edge_index, size):
+        return x_j
+
+    def update(self, aggr_out):
+        return aggr_out
+
+    def __repr(self):
+        return '{}({},{})'.format(self.__class__.__name__, self.in_channels, self.out_channels)
+</REFERENCE_CODE_ID>
+Example YAML Config:
+<REFERENCE_CONFIG_ID="MMGCN_2019">
+embedding_size: 64
+n_layers: 2
+reg_weight: [0, 0.00001, 0.0001, 0.001, 0.01, 0.1]
+learning_rate: [0.0001, 0.0005, 0.001, 0.005, 0.01]
+
+hyper_parameters: ["reg_weight", "learning_rate"]
+
+
+</REFERENCE_CONFIG_ID>
+
+[File Paths] (only these two files are allowed)
+- Model code: /data2/liyu/llh/rn/MMRec_2/src/models/slmrec.py
+- Hyperparam config: /data2/liyu/llh/rn/MMRec_2/src/configs/model/SLMRec.yaml
+
+[Hyperparam Constraint]
+- Prefer fixed values; at most 3 hyperparameters for grid search. Keep the search space small.
+
+Steps (must use the ReAct toolchain):
+1) Do shape inference (inputs/outputs/modules) in natural language.
+2) Generate/update code and config; write via write/patch tools to the paths above.
+3) If system logs show errors, fix the root cause per the paper (do not suppress errors); then stop and wait for the next log.
+4) End with a brief summary of key changes, fidelity to the paper, and any remaining gaps.
+
+2025-12-16 19:21:33 - INFO - [SLMRec] Attempt 1 final_output: ### 1) Shape/module check (mental inference)
+
+- **Inputs from framework**
+  - `dataset.inter_matrix(form='coo')` → user–item implicit interactions used to build the bipartite graph adjacency for LightGCN propagation.
+  - Optional modality features attached to the model instance by the base class (assumed RecBole-like):  
+    `self.v_feat` (items×Dv), `self.a_feat` (items×Da), `self.t_feat` (items×Dt).  
+- **Model outputs**
+  - `forward()` returns fused node embeddings for **all nodes** `[n_users+n_items, d]`, computed as the mean of available modality channels (ID always included; V/A/T if present).
+  - `full_sort_predict((user,))` returns scores `[batch_users, n_items]` via dot product `user_emb @ item_emb^T`.
+- **Losses / training flow**
+  - **Main task** (paper Eq. 13): InfoNCE on `(u, pos)` vs sampled negatives `(u, neg_k)` with temperature `tau`.
+  - **SSL auxiliary** (paper Eq. 11 / FAC equation): depending on `ssl_mode`:
+    - `FD`: two feature-dropout views per modality; item–item InfoNCE within modality.
+    - `FM`: two modality-dropped fused views; item–item InfoNCE.
+    - `FAC`: ID-anchored hierarchical cross-modal alignment via projection heads and InfoNCE.
+  - **Final objective** (paper Eq. 14): `L = L_main + alpha * L_ssl + lambda * ||Θ||^2`.
+
+Minimal explicit assumptions are documented inline in code comments (notably: modality injection is implemented as a residual add to item embeddings post-LightGCN due to framework constraints).
+
+### 2) Implemented/updated files
+
+- Wrote model code to:  
+  `/data2/liyu/llh/rn/MMRec_2/src/models/slmrec.py`
+- Wrote hyperparameter config to:  
+  `/data2/liyu/llh/rn/MMRec_2/src/configs/model/SLMRec.yaml`
+
+### 3) Logs / errors
+No system logs were provided yet (tests have not been run from my side). Waiting for the benchmark/smoke-test output to fix any integration issues.
+
+### 4) Summary (changes, fidelity, gaps)
+
+- Implemented **SLMRec** with:
+  - LightGCN backbone,
+  - InfoNCE main loss,
+  - SSL variants `FD`, `FM`, `FAC` (default `FAC`),
+  - ID-anchored hierarchical FAC alignment with projection heads.
+- Config includes fixed defaults plus a **small grid (3 hparams)**: `alpha`, `tau_ssl`, `learning_rate`.
+
+Remaining potential gap vs paper:
+- True paper formulation encodes *augmented features through the graph encoder*; here, due to ambiguity/constraints, modality features are injected as a **residual** into item embeddings after LightGCN forward (documented as an assumption). If tests/logs indicate mismatched expected interfaces, I’ll adjust to the repo’s conventions.
+2025-12-16 19:21:33 - INFO - Executing command in '/data2/liyu/llh/rn/MMRec_2/src': python run_benchmark.py --model=SLMRec --dataset baby --gpu=7
+2025-12-16 19:21:44 - INFO - [SLMRec] run_code exit=1, log tail:
+[*] 待处理数据集 (1): ['baby'] @ GPU 7
+
+>>> [1/1] 处理 baby ...
+
+============================================================
+[*] 开始复现任务 - 模型: SLMRec | 数据集: baby | GPU: 7
+============================================================
+[>] 执行: /data6/liyu/conda/paper_agent/bin/python -u main.py --model SLMRec --dataset baby --gpu_id 7
+    epochs=1
+    hyper_parameters=['seed', 'alpha', 'tau_ssl', 'learning_rate']
+    16 Dec 19:21    INFO =========1/12: Parameters:['seed', 'alpha', 'tau_ssl', 'learning_rate']=(999, 0.01, 0.1, 0.0005)=======
+    Traceback (most recent call last):
+    File "/data2/liyu/llh/rn/MMRec_2/src/main.py", line 30, in <module>
+    File "/data2/liyu/llh/rn/MMRec_2/src/utils/quick_start.py", line 74, in quick_start
+    File "/data2/liyu/llh/rn/MMRec_2/src/models/slmrec.py", line 156, in __init__
+    AttributeError: 'Config' object has no attribute 'get'
+
+[-] 任务异常退出 (Code: 1)
+------------------------------ 错误堆栈片段 ------------------------------
+Traceback (most recent call last):
+File "/data2/liyu/llh/rn/MMRec_2/src/main.py", line 30, in <module>
+quick_start(model=args.model, dataset=args.dataset, config_dict=config_dict, save_model=True)
+File "/data2/liyu/llh/rn/MMRec_2/src/utils/quick_start.py", line 74, in quick_start
+model = get_model(config['model'])(config, train_data).to(config['device'])
+File "/data2/liyu/llh/rn/MMRec_2/src/models/slmrec.py", line 156, in __init__
+self.embedding_size = int(config.get('embedding_size', 64))
+AttributeError: 'Config' object has no attribute 'get'
+------------------------------------------------------------
+[-] 详细日志已保存: logs/SLMRec_baby_20251216_192144.log
+[-] baby 任务执行失败或未解析到指标。
+
+2025-12-16 19:21:44 - INFO - [SLMRec] Attempt 2 user prompt: 
+The system-run smoke test failed. Use the log below to fix the root cause per the paper (do not wrap/silence errors), then rewrite the necessary files.
+
+[Last Output]
+[*] 待处理数据集 (1): ['baby'] @ GPU 7
+
+>>> [1/1] 处理 baby ...
+
+============================================================
+[*] 开始复现任务 - 模型: SLMRec | 数据集: baby | GPU: 7
+============================================================
+[>] 执行: /data6/liyu/conda/paper_agent/bin/python -u main.py --model SLMRec --dataset baby --gpu_id 7
+    epochs=1
+    hyper_parameters=['seed', 'alpha', 'tau_ssl', 'learning_rate']
+    16 Dec 19:21    INFO =========1/12: Parameters:['seed', 'alpha', 'tau_ssl', 'learning_rate']=(999, 0.01, 0.1, 0.0005)=======
+    Traceback (most recent call last):
+    File "/data2/liyu/llh/rn/MMRec_2/src/main.py", line 30, in <module>
+    File "/data2/liyu/llh/rn/MMRec_2/src/utils/quick_start.py", line 74, in quick_start
+    File "/data2/liyu/llh/rn/MMRec_2/src/models/slmrec.py", line 156, in __init__
+    AttributeError: 'Config' object has no attribute 'get'
+
+[-] 任务异常退出 (Code: 1)
+------------------------------ 错误堆栈片段 ------------------------------
+Traceback (most recent call last):
+File "/data2/liyu/llh/rn/MMRec_2/src/main.py", line 30, in <module>
+quick_start(model=args.model, dataset=args.dataset, config_dict=config_dict, save_model=True)
+File "/data2/liyu/llh/rn/MMRec_2/src/utils/quick_start.py", line 74, in quick_start
+model = get_model(config['model'])(config, train_data).to(config['device'])
+File "/data2/liyu/llh/rn/MMRec_2/src/models/slmrec.py", line 156, in __init__
+self.embedding_size = int(config.get('embedding_size', 64))
+AttributeError: 'Config' object has no attribute 'get'
+------------------------------------------------------------
+[-] 详细日志已保存: logs/SLMRec_baby_20251216_192144.log
+[-] baby 任务执行失败或未解析到指标。
+
+
+Rules:
+- Only modify these two files: /data2/liyu/llh/rn/MMRec_2/src/models/slmrec.py and /data2/liyu/llh/rn/MMRec_2/src/configs/model/SLMRec.yaml.
+- Fix the actual cause suggested by the error/log, avoid broad try/except, and keep behavior aligned with the paper.
+- End with a brief conclusion.
+
+2025-12-16 19:22:49 - INFO - [SLMRec] Attempt 2 final_output: Fixed the smoke-test crash caused by assuming `config` is a dict.
+
+- **Root cause (from log):** `AttributeError: 'Config' object has no attribute 'get'` in `SLMRec.__init__`.
+- **Fix (per repo conventions):** Replaced all `config.get(...)` usage with a RecBole-style helper:
+  ```python
+  def _cfg(key, default):
+      return config[key] if key in config else default
+  ```
+  and updated all hyperparameter reads accordingly (including `fac_hidden`, `lambda/reg_weight`, etc.).
+
+Edits applied only to:
+- `/data2/liyu/llh/rn/MMRec_2/src/models/slmrec.py`
+
+Config file unchanged.
+
+No errors were masked; this directly addresses the failing call site. Awaiting the next system smoke-test log.
+2025-12-16 19:22:49 - INFO - Executing command in '/data2/liyu/llh/rn/MMRec_2/src': python run_benchmark.py --model=SLMRec --dataset baby --gpu=7
+2025-12-16 19:24:56 - INFO - [SLMRec] run_code exit=0, log tail:
+ precision@20: 0.0011    precision@50: 0.0008    map@5: 0.0037    map@10: 0.0044    map@20: 0.0050    map@50: 0.0056    ,
+    best test: recall@5: 0.0062    recall@10: 0.0108    recall@20: 0.0184    recall@50: 0.0381    ndcg@5: 0.0040    ndcg@10: 0.0055    ndcg@20: 0.0075    ndcg@50: 0.0115    precision@5: 0.0014    precision@10: 0.0012    precision@20: 0.0010    precision@50: 0.0009    map@5: 0.0031    map@10: 0.0037    map@20: 0.0042    map@50: 0.0049
+    █████████████ BEST ████████████████
+    16 Dec 19:24    INFO 	Parameters: ['seed', 'alpha', 'tau_ssl', 'learning_rate']=(999, 0.01, 0.2, 0.001),
+[+] 解析成功: {'recall@5': 0.0068, 'recall@10': 0.0106, 'recall@20': 0.019, 'recall@50': 0.0387, 'ndcg@5': 0.0042, 'ndcg@10': 0.0054, 'ndcg@20': 0.0076, 'ndcg@50': 0.0116, 'precision@5': 0.0016, 'precision@10': 0.0012, 'precision@20': 0.0011, 'precision@50': 0.0009, 'map@5': 0.0032, 'map@10': 0.0037, 'map@20': 0.0042, 'map@50': 0.0048}
+[+] 排行榜已更新: /data2/liyu/llh/rn/MMRec_2/src/leaderboard.csv
+
+2025-12-16 19:25:09 - INFO - Finished node SLMRec_2022 in 311.29s | Status=Success
+2025-12-16 19:25:09 - INFO - Task finished.
+2025-12-16 19:34:06 - INFO - Worker starting with 1 nodes.
+2025-12-16 19:34:06 - INFO - Starting train task for 1 nodes.
+2025-12-16 19:34:06 - INFO - [DRAGON] System prompt: 
+You are a paper-reproduction ReAct agent. Primary goal: faithfully implement the paper. Do not hide errors; use smoke-test feedback to fix root causes.
+
+[Tools & Permissions]
+- Only use the provided tools: read/write allowed files, apply patches to allowed files.
+- You may ONLY read/write the two specific files of the current paper: the model code file and the hyperparameter file. Everything else is forbidden.
+- You cannot execute shell commands yourself; the system will run the benchmark command and return the log.
+
+[Required Workflow]
+- Start with a mental shape/module check (inputs, outputs, losses, data flow).
+- Implement the paper as described; if the paper is ambiguous, state minimal assumptions inline as comments/config choices.
+- Write code + config to the given paths via tools (no raw code in replies).
+- Treat failing smoke tests as signals: inspect logs, fix the cause per paper intent, and re-write files. Do not wrap or silence errors to pass.
+- Avoid broad try/except; prefer explicit, narrow error handling only when the paper implies it.
+- Conclude with brief changes + whether tests (if any) were run/passed; note any remaining deviations from the paper.
+
+[Delivery Requirements]
+- Prioritize paper fidelity over “just running.” Keep hyperparameter search minimal and defaults reasonable.
+- Maintain device consistency; keep replies brief; no large code dumps in replies (write files instead).
+
+[Global Knowledge]
+- Use only generalizable tips from the knowledge base; ignore dataset-specific or misleading items unless explicitly applicable.
+- Current knowledge:
+## Generalizable
+
+- **Align with the framework’s APIs early (config, dataset, trainer contracts)**  
+  Treat `Config`/`config` as a framework object (often mapping-like, not a Python `dict`). Prefer `key in config` and `config[key]`; avoid assuming `.get()` exists. Add required lifecycle hooks (e.g., `pre_epoch_processing` / `post_epoch_processing`) as no-ops if the trainer expects them.
+
+- **Use a small compatibility accessor instead of type assumptions**  
+  Implement a helper like `cfg(key, default=_MISSING)` that supports mapping-style access and makes missing keys explicit (fail loudly when truly required; default only when intended).
+
+- **Don’t assume constructor inputs are raw datasets**  
+  In many recsys codebases, `dataset` arguments may be dataloaders/wrappers. Prefer framework-initialized attributes (e.g., `self.n_users/self.n_items`) and/or resolve through common wrapper paths (e.g., `obj.dataset`, mapping lengths) with a prioritized lookup.
+
+- **Normalize interface variability at one boundary**  
+  Convert whichever interaction representation you receive (sparse matrix, edge index, table/columns, provider method) into one canonical format (e.g., torch sparse COO) used by the rest of the model. Detect and invoke callable providers when appropriate.
+
+- **Fix root causes at the failing call site; don’t mask errors**  
+  Correct the incompatible access/assumption directly (e.g., replace `config.get` with supported access) rather than adding broad guards/`try/except` that hide real incompatibilities.
+
+- **Make minimal explicit assumptions and document them**  
+  When repo/paper interfaces are unclear (available modalities, fields, required keys), state assumptions and keep them minimal to keep debugging targeted and changes reversible.
+
+- **Keep hyperparameter search small and stability-focused**  
+  Restrict sweeps to a few high-impact knobs (e.g., learning rate, regularization weights, key model scalars) to reduce variance and control runtime.
+
+## Pending/Specific
+
+- **Multimodal optionality quirks (model/dataset-specific)**  
+  Some papers/repos (e.g., SLMRec/LATTICE-style) may assume visual/text/audio features, but real pipelines may omit or store them inconsistently (often on the underlying dataset). Handling “missing modality” gracefully is useful but implementation details are dataset/repo-specific.
+
+- **SSL/contrastive variant switching (paper-specific)**  
+  Requirements like FD/FM/FAC mode-specific augmentations/projection heads and cleanly switching losses are tied to particular SSL formulations and shouldn’t be generalized beyond “ensure mode switches are internally consistent.”
+
+- **Graph construction details (paper-specific)**  
+  Items like “MVGAE requires bipartite adjacency with symmetric normalization and possible self-loops” are specific to that model family and shouldn’t be treated as universal guidance.
+
+- **Dataset-sensitive Top-K / co-occurrence settings (paper/dataset-specific)**  
+  Guidance like “K≈40–50” and warnings about over-smoothing/compute are highly dataset-dependent; keep only as a reminder to tune K per dataset.
+
+- **Fusion operator parameterization (implementation-specific)**  
+  Notes such as “concat needs an extra projection layer; sum/max does not” depend on the particular architecture/config scheme; retain only as a caution to keep config and tensor dimensions consistent.
+
+- **“Disable unclear objectives by default” (potentially situational)**  
+  Defaults like `cl_weight=0` can be a safe baseline when reproducing uncertain papers, but this is an experimental choice rather than general best practice.
+
+- **Misleading/failed ideas (retain as anti-pattern reminders)**  
+  - Assuming `config.get()` exists on framework configs.  
+  - Assuming `dataset` is always the raw dataset object with `n_users/n_items`.  
+  - Using broad `try/except` to “make it run” instead of resolving incompatibilities.
+
+2025-12-16 19:34:06 - INFO - [DRAGON] Attempt 1 user prompt: 
+Goal: Using paper info and graph context, implement the model code + hyperparameter file at the specified paths. If the paper is unclear, make the smallest explicit assumptions (comment them). System tests may run later and return logs to guide fixes—do not mask errors to “pass.”
+
+[Paper Node]
+- Title: DRAGON_2023
+- Method name: DRAGON
+- Core idea: The DRAGON model aims to enhance the representation of users and items in a multimodal recommendation system by incorporating dual representations. It achieves this by constructing heterogeneous and homogeneous graphs that capture both inter- and intra-relations between users and items. The model utilizes modality-specific user-item bipartite graphs and homogeneous graphs (user co-occurrence and item semantic graphs) to learn rich user and item representations. Additionally, it adopts a simple and effective fusion technique, called attentive concatenation, to integrate modality features. The method has been shown to outperform state-of-the-art multimodal models in recommendation tasks.
+- Method description: 
+# 3 Methodology
+
+This section introduces the details of our proposed model DRAGON. Fig. 1 shows the overall architecture of DRAGON. There are four main components: (1) graph learning on a modality-specific heterogeneous graph to learn a uni-modal representation; (2) Multimodal representation learning module that captures user preference on different modalities and complementary information from each modality; (3) graph learning on homogeneous graphs to capture the co-occurrence relation between users and the semantic relation between items; (4) a predictor module that ranks the candidate items based on the scores calculated from final user and item representations.
+
+![](images/ceb8c960941ee4651a5131d475fcfb9a1917c0296d8b77b15171193484ab1678.jpg)  
+Fig. 1. The diagram depicts the main components of DRAGON. We first learn the modality-specific representations, then the multimodal representation learning module fused the single-modality representations and utilizes the homogeneous graph to capture the internal relations
+
+# 3.1 Preliminary
+
+Given a set of $N$ users $u \in \mathcal { U }$ , a set of $M$ items $i \in \mathcal { Z }$ . We model the dyadic relations of user interactions as a user-item bipartite graph $\mathcal { G } = \{ \mathcal { U } , \mathcal { Z } , \mathcal { E } \}$ , where we regard the historical interactions as the set of edges in the graph denoted by $\varepsilon$ . Besides the user-item interactions, each item is associated with multimodal content information $m \in \{ v , t \}$ , where $\boldsymbol { v }$ and $t$ represent the visual and textual features respectively. We denote the modality feature for an item $i$ as $\pmb { x } _ { i } ^ { m } \in \mathbb { R } ^ { d _ { m } }$ , where $d _ { m }$ denotes the feature dimension of modality $m$ . In this paper, we only consider the visual and textual modalities denoted by $v$ and $t$ . However, the proposed framework can be easily extended to scenarios involving more than two modalities.
+
+# 3.2 Dual Representation Learning
+
+Learning the representations of users and items is critical for the recommendation system. All representation learning-based techniques assume the existence of a common representation with consistent knowledge of different views of items [27]. Different views of an item contain specific discriminant information in addition to consistent knowledge about this item. We construct the heterogeneous and homogeneous graphs together to learn the dual representations of both user and item, which could capture both the internal association and the relationship between users and items.
+
+Heterogeneous Graph To learn modality-specific user and item representations, we construct a user-item graph for each modality, which is denoted as $\mathcal { G } _ { m }$ . Following MMGCN [24], we maintain the same graph structure $\mathcal { G }$ for different $\mathcal { G } _ { m }$ , but only keep the node features associated with a specific modality $m$ . We adopt LightGCN [7] to encode $\mathcal { G } _ { m }$ . As shown in [7], LightGCN simplifies the graph convolutional operations by excluding the feature transformation and nonlinear activation modules to improve recommendation performance and meanwhile ease the model optimization process. Specifically, the user and item representations at the $( l + 1 )$ -th graph convolution layer of $\mathcal { G } _ { m }$ are derived as follows:
+
+$$
+\pmb { u } _ { m } ^ { ( l + 1 ) } = \sum _ { i \in \mathcal { N } _ { u } } \frac { 1 } { \sqrt { | \mathcal { N } _ { u } | } \sqrt { | \mathcal { N } _ { i } | } } \pmb { i } _ { m } ^ { ( l ) } , \qquad \pmb { i } _ { m } ^ { ( l + 1 ) } = \sum _ { u \in \mathcal { N } _ { i } } \frac { 1 } { \sqrt { | \mathcal { N } _ { u } | } \sqrt { | \mathcal { N } _ { i } | } } \pmb { u } _ { m } ^ { ( l ) } ,
+$$
+
+Where $\mathcal { N } _ { u }$ and ${ \mathcal { N } } _ { i }$ are the set of first hop neighbors of $u$ and $_ i$ in $\mathcal { G } _ { m }$ . $\mathbf { \boldsymbol { u } } _ { m } ^ { ( 0 ) }$ is randomly initialized and $\mathbf { \Delta } _ { i _ { m } } ^ { ( 0 ) }$ is initialized with $\mathbf { \boldsymbol { x } } _ { i } ^ { m }$ . The symmetric normalization $\frac { 1 } { \sqrt { | N _ { u } | } \sqrt { | N _ { i } | } }$ is used to normalize the modality features learned from each layer which avoids the increase of scale when operates the graph convolutional operations.
+
+After $L$ layers of data propagation, we combine the representations from every GCN layer using element-wise summation to derive the modality-specific representations for users and items. Formally,
+
+$$
+\pmb { u } _ { m } = \sum _ { l = 0 } ^ { L } \pmb { u } _ { m } ^ { ( l ) } , \qquad \quad \pmb { i } _ { m } = \sum _ { l = 0 } ^ { L } \pmb { i } _ { m } ^ { ( l ) } .
+$$
+
+In such cases, the historical interactions and the modality information have been encoded into the final single-modal representations of users and items. And those operations have been applied to each modality by propagating on the modality-specific user-item bipartite graphs to learn the representations for each modality.
+
+Homogeneous Graph In addition to employing the heterogeneous graph, which encodes the dyadic relation between users and items, we argue that the recommendation performance can be further enhanced by modeling the internal relations between users or items. For the two homogeneous graphs, we preestablished and freeze them to maintain the initial co-occurrence relation and semantic meaning.
+
+User Co-occurrence Graph. Based on the assumption that users who have interacted with similar items usually have similar preferences. We argue that the user’s preference pattern is hidden inside the co-occurrence items and we construct a homogeneous user co-occurrence graph to learn the internal relations between users. However, the numbers of co-occurrence items between users are in a large range. In a general situation, the user will have a high number of commonly interacted items with a small group of users but with few items with other users. We only consider those who have more commonly interacted items with the user to capture similar preferences. To explicitly model the item cooccurrence patterns of users, we construct a homogeneous user co-occurrence graph $\ddot { \mathcal { G } } = \{ \mathcal { U } , \mathcal { P } _ { u } \}$ , where $\mathcal { P } _ { u } = \{ e _ { u , u ^ { \prime } } | u , u ^ { \prime } \in \mathcal { U } \}$ denotes the edges between user nodes in $\ddot { \mathcal { G } }$ and $e _ { u , u ^ { \prime } }$ record the number of items that commonly interacted with u and u’.
+
+For every user $u \in \mathcal { U }$ , we retain its top- $k$ users with the highest number of commonly interacted items. Specifically, we keep the edge weight if $u ^ { \prime }$ $e _ { u , u ^ { \prime } }$ belongs to the top- $k$ users. Otherwise, the edge weight is $0$ .
+
+$$
+e _ { u , u ^ { \prime } } = \left\{ \begin{array} { l l } { e _ { u , u ^ { \prime } } } & { \mathrm { ~ i f ~ } e _ { u , u ^ { \prime } } \in \mathrm { t o p - k } ( e _ { u } ) , } \\ { 0 } & { \mathrm { ~ o t h e r w i s e } . } \end{array} \right.
+$$
+
+After establishing the user co-occurrence graph, we incorporate the attention mechanism when performing the graph propagation. The weight used for aggregating neighboring nodes for a user is computed using the softmax function to maximize the effect of neighboring users with a higher number of commonly interacted items. The representation of $u$ learned from $\ddot { \mathcal { G } }$ at layer $l + 1$ is denoted as $\boldsymbol { h } _ { \boldsymbol { u } } ^ { ( l + 1 ) }$ , which is derived as follows:
+
+$$
+\pmb { h } _ { u } ^ { ( l + 1 ) } = \sum _ { u ^ { \prime } \in \mathcal { N } _ { u } } \frac { e x p ( e _ { u , u ^ { \prime } } ) } { \sum _ { \hat { u } \in \mathcal { N } _ { u } } e x p ( e _ { u , \hat { u } } ) } \pmb { h } _ { u ^ { \prime } } ^ { ( l ) } ,
+$$
+
+Where $e _ { u , u ^ { \prime } }$ indicates the number of common interacted items between $u$ and $u ^ { \prime }$ and $\mathcal { N } _ { u }$ denotes the neighbors of user $u$ in $\tilde { \mathcal { G } }$ . In this case, the representation of each user can be enhanced based on neighbors in the co-occurrence graph.
+
+Item Semantic Graph. Multimodal features offer rich and valuable content information about items, but previous studies [23,19] neglect the significant underlying semantic relations of item features. Inspired by [25], we argue that item features are objective and we could establish the modality-specific homogeneous item graphs based on the raw features to learn the internal relations between items. Specifically, we construct the modality-aware item semantic graph $\hat { \mathcal { G } } _ { m } = \{ \mathcal { T } , \mathcal { P } _ { m } ^ { i } \}$ for each modality $m$ , where $\mathcal { P } _ { m } ^ { \iota } = \{ e _ { i , i ^ { \prime } } ^ { m } | i , i ^ { \prime } \in \mathcal { I } \}$ denotes the edges between item nodes in $\hat { \mathcal { G } } _ { m }$ . For an edge $e _ { i , i ^ { \prime } }$ , its weight is calculated by the cosine similarity between original modality features of $\pmb { x } _ { i } ^ { m }$ and $\pmb { x } _ { i ^ { \prime } } ^ { m }$
+
+$$
+e _ { i , i ^ { \prime } } ^ { m } = \frac { ( \pmb { x } _ { i } ^ { m } ) ^ { \top } \pmb { x } _ { i ^ { \prime } } ^ { m } } { \| \pmb { x } _ { i } ^ { m } \| \| \pmb { x } _ { i ^ { \prime } } ^ { m } \| } .
+$$
+
+The derived $\hat { \mathcal { G } } _ { m }$ is a fully connected graph where edge weights are calculated based on the similarity scores of modality features of connected nodes. Next, we make the graph sparse by retaining the top- $k$ similar items of every item. As the $\hat { \mathcal { G } } _ { m }$ is a weighted graph, we convert it into an unweighted graph that captures the fundamental relation structure of the most related items [3]. Formally,
+
+$$
+e _ { i , i ^ { \prime } } ^ { m } = \left\{ \begin{array} { l l } { 1 } & { \mathrm { ~ i f ~ } e _ { i , i ^ { \prime } } ^ { m } \in \mathrm { t o p  – k } ( e _ { i } ^ { m } ) , } \\ { 0 } & { \mathrm { ~ o t h e r w i s e } . } \end{array} \right.
+$$
+
+Since we get one item semantic graph for each modality, we combine them by performing weighted summation based on the importance score $\alpha _ { m }$ that indicates the contribution of each modality and the summation is $1$ . Formally, $\hat { \mathcal { G } } = \{ \mathcal { T } , \mathcal { P } _ { i } \}$ , where $\mathcal { P } _ { i } = \{ e _ { i , i ^ { \prime } } | i , i ^ { \prime } \in \mathcal { I } \}$ and $\begin{array} { r } { e _ { i , i ^ { \prime } } = \sum _ { m \in M } \alpha e _ { i , i ^ { \prime } } ^ { m } } \end{array}$ .
+
+After establishing the item semantic graph, we apply the graph convolution operation on it to capture the item-item relationship:
+
+$$
+h _ { i } ^ { ( l + 1 ) } = \sum _ { i ^ { \prime } \in \mathcal { N } _ { i } } e _ { i , i ^ { \prime } } h _ { i ^ { \prime } } ^ { ( l ) } ,
+$$
+
+Where ${ \mathcal { N } } _ { i }$ denotes the neighbors of item $i$ in $\mathcal { G } ^ { i }$ . Both $ { h _ { u } ^ { ( 0 ) } }$ and ${ h _ { i } ^ { ( 0 ) } }$ are initialized with their fused representations ${ \pmb u } _ { f }$ and ${ \dot { \pmb { \imath } } } _ { f }$ , which are introduced in the following section.
+
+# 3.3 Multimodal Fusion
+
+An important factor influencing multimodal recommendation accuracy is multimodal fusion. As we mentioned in Section 1, previous multimodal recommendation models utilizing single-modal information perform better than multimodal information. We speculate their fusion methods may fail to capture modalityspecific characteristics and even corrupt the learned single-modality representation. We intend to learn the multi-modality that can capture complementary information which can not be contained in the single modality. Specifically, to fuse the single modal features derived from modality-specific user-item graphs, we apply the Attentive Concatenation for user multimodal embeddings that capture the user preference on different modalities and direct concatenation for item multimodal embeddings. The attention weight $\alpha$ for users is initialized to 0.5. Formally,
+
+$$
+\begin{array} { r } { \pmb { u } _ { f } = \alpha \pmb { u } _ { v } \parallel ( 1 - \alpha ) \pmb { u } _ { t } , \qquad \pmb { i } _ { f } = \pmb { i } _ { v } \parallel i _ { t } , } \end{array}
+$$
+
+Where $\parallel$ denotes the concatenation operation. By performing attentive concatenation, we assume the single modality representations carry the richest information for each modality and this operation can capture the intact complementary information from each modality.
+
+# 3.4 Integration with Dual Representations
+
+We integrate representations of users and items learned from heterogeneous (i.e., Modality-specific User-Item Graphs) and homogeneous (i.e., User Co-occurrence Graph $\&$ Item Semantic Graph) graphs to form their dual representations such that interactions between users and items and their internal relations can be well captured. We perform element-wise summation on the outputs learned from the three graphs to generate the dual representations for $u$ and $_ i$ :
+
+$$
+z _ { u } = { \pmb u } _ { f } + { \pmb h } _ { u } ^ { L _ { u } } , \qquad z _ { i } = i _ { f } + { \pmb h } _ { i } ^ { L _ { i } } ,
+$$
+
+Where $z _ { u }$ and $z _ { i }$ denote the final representations of user $u$ and item $_ i$ . $L _ { u }$ and $L _ { i }$ denote the number of GCN layers for the user co-occurrence graph and item semantic graph respectively.
+
+# 3.5 Optimization
+
+To optimize the parameters of DRAGON for the recommendation task, we leverage the Bayesian Personalized Ranking (BPR) loss [17], which aims to score higher for the positive item than the negative one. We construct a triplet set $\mathcal { R }$ including the triplet $( u , i , j )$ for each user $u$ with the positive item $i$ and a randomly sampled negative item $j$ that has no interactions with $u$ . The loss function $\mathcal { L } _ { r e c }$ is defined as follows,
+
+$$
+\begin{array} { l } { \displaystyle \mathcal { R } = \{ ( u , i , j ) | ( u , i ) \in \mathcal { E } , ( u , j ) \notin \mathcal { E } \} , } \\ { \displaystyle \mathcal { L } _ { r e c } = \sum _ { ( u , i , j ) \in \mathcal { R } } - \mathrm { l n } \sigma ( y _ { u i } - y _ { u j } ) + \lambda \| \Theta \| _ { 2 } , } \\ { \displaystyle ( u , i , j ) \in \mathcal { R } } \end{array}
+$$
+
+Where $y _ { u i } = z _ { u } ^ { \top } z _ { i }$ calculates the inner product of $z _ { u }$ and $z _ { i }$ , $\lambda$ is the $L _ { 2 }$ regularization weight, and $\Theta$ denotes model parameters.
+- Hyperparameter definition: 
+ - Learning rate: Controls the step size in optimization, typical range {1e-6, 1e-5, 1e-4, 1e-3, 1e-2, 1e-1}, with 1e-4 being optimal.
+- Regularization weight (λ): Controls L2 regularization to prevent overfitting, typical range {1e-5, 1e-4, 1e-3, 1e-2, 1e-1}.
+- Number of GCN layers in heterogeneous graph (L): Number of graph convolution layers for modality-specific user-item graphs, fixed to 2.
+- Number of GCN layers in homogeneous graphs (L_u and L_i): Number of layers for user co-occurrence graph and item semantic graph, fixed to 1.
+- Top-k in user co-occurrence graph: Number of top users to retain based on common interactions, set to 10.
+- Modality weight in item semantic graph (α_m): Weight for combining modality-specific item graphs, fixed to 0.1 for image.
+
+[Graph Context]
+[Related Methods 1]
+Model: LATTICE_2021
+Idea: LATTICE targets multimedia recommendation where items have visual and textual content, and existing multimodal models mostly treat these features as side information on user–item graphs while leaving item–item relations implicit. This leads to a gap between collaborative co-occurrence relations and genuine semantic similarities among items. LATTICE proposes to mine latent item–item structures directly from multimodal features and to inject these structures into collaborative filtering (CF) models. Concretely, for each modality it builds an initial k-NN item graph via cosine similarity over raw features, then learns a refined latent graph from transformed high-level features and combines it with the initial graph via a skip connection. The modality-specific latent graphs are fused with learnable modality weights into a single multimodal item graph. Graph convolution layers are then applied over this latent item graph, but only on item ID embeddings (not on raw features), to encode high-order item–item affinities. The resulting item representations are L2-normalized and added as a residual to the base CF item embeddings (e.g., LightGCN, NGCF, MF), yielding a plug-and-play module that improves both warm-start and cold-start recommendation performance by explicitly modeling semantic item–item relationships from multimodal content.
+Relation:
+<COMPARISON_CONTEXT>
+Similarities:
+1. Both construct item–item graphs from multimodal content (visual/text) and perform lightweight graph propagation without nonlinear transforms.
+2. Both aggregate per-modality item graphs with learnable importance weights (α) and optimize end-to-end with a BPR pairwise ranking loss.
+3. Both rely on top-k sparsification of item graphs built from cosine similarities to control noise and cost.
+
+Differences:
+1. Modeling scope: DRAGON jointly models users and items (heterogeneous user–item graphs plus homogeneous user co-occurrence and item semantic graphs), while LATTICE only enriches item embeddings and delegates user–item interaction modeling to an external CF backbone.
+2. Use of modalities: DRAGON uses modality features as node inputs for user–item propagation and fuses them into representations (attentive concat for users, concat for items), whereas LATTICE uses modality features only to learn latent item graph structures and runs GCN over item ID embeddings.
+3. Graph structure learning: DRAGON precomputes and freezes homogeneous graphs (user top-k co-occurrence with attention; item KNN binarized), while LATTICE learns latent, weighted adjacencies via trainable feature transforms and a skip connection to initial graphs before multimodal fusion.
+4. Integration with CF: DRAGON is a unified scorer over dual representations (sum of heterogeneous and homogeneous outputs), whereas LATTICE adds a normalized item-graph embedding as a residual to any CF method’s item embedding (plug-and-play, aiding cold-start).
+</COMPARISON_CONTEXT>
+
+[Related Methods 2]
+Model: SLMRec_2022
+Idea: SLMRec introduces a self-supervised learning (SSL) approach for multimedia recommendation. It overcomes limitations of traditional supervised learning methods by incorporating self-supervised tasks to uncover multi-modal patterns in the data. The method utilizes data augmentation and contrastive learning to improve the quality of item representations by capturing underlying relationships between different modalities (e.g., visual, acoustic, textual). The proposed model, which uses graph neural networks (GNNs) for the recommendation task, enhances user-item interactions by learning multi-modal patterns through multi-task learning, enabling better recommendation accuracy and robustness, especially in cold-start scenarios.
+Relation:
+<COMPARISON_CONTEXT>
+Similarities:
+1. Both learn modality-specific user/item embeddings with LightGCN on the user–item bipartite graph.
+2. Both follow a separate-then-fuse design that encodes each modality independently before aggregation for final scoring.
+3. Both train with pairwise objectives that compare a user's positive item against sampled negatives.
+
+Differences:
+1. Training objective: DRAGON is purely supervised with BPR and random negatives, while SLMRec is multi-task with self-supervised InfoNCE losses (FD/FM augmentations, FAC alignment) and uses InfoNCE as the main ranking loss.
+2. Graph modeling: DRAGON augments the bipartite graph with homogeneous user–user and item–item graphs (co-occurrence and feature-similarity) for additional propagation; SLMRec uses only the user–item graph and relies on feature-level augmentations instead of extra graphs.
+3. Fusion/alignment philosophy: DRAGON fuses via attentive concatenation for users and direct concatenation for items, then sums with homogeneous-graph outputs; SLMRec aligns modalities via projection heads and multi-space contrastive learning anchored on ID embeddings to enforce cross-modal consistency.
+4. Modality usage: DRAGON exploits two modalities (visual/text) both for item initialization and building an item semantic graph; SLMRec handles four modalities (visual/acoustic/text/ID) with factor- and modality-level masking and treats ID as the dominant anchor for alignment.
+</COMPARISON_CONTEXT>
+Example Python Code:
+<REFERENCE_CODE_ID="SLMRec_2022">
+# coding: utf-8
+#
+# Updated by enoche
+# Paper: Self-supervised Learning for Multimedia Recommendation
+# Github: https://github.com/zltao/SLMRec
+#
+
+import torch
+from torch import nn
+import numpy as np
+import scipy.sparse as sp
+
+from torch_scatter import scatter
+from sklearn.cluster import KMeans
+from common.abstract_recommender import GeneralRecommender
+
+## Only visual + text features
+##
+
+class SLMRec(GeneralRecommender):
+    def __init__(self, config, dataset):
+        super(SLMRec, self).__init__(config, dataset)
+        self.a_feat = None      # no audio feature
+        self.config = config
+        self.infonce_criterion = nn.CrossEntropyLoss()
+        self.__init_weight(dataset)
+
+    def __init_weight(self, dataset):
+        self.num_users = self.n_users
+        self.num_items = self.n_items
+        self.latent_dim = self.config['recdim']
+        self.n_layers = self.config['layer_num']
+        self.mm_fusion_mode = self.config['mm_fusion_mode']
+        self.temp = self.config['temp']
+
+        self.create_u_embeding_i()
+
+        self.all_items = self.all_users = None
+
+        train_interactions = dataset.inter_matrix(form='csr').astype(np.float32)
+        coo = self.create_adj_mat(train_interactions).tocoo()
+        indices = torch.LongTensor([coo.row.tolist(), coo.col.tolist()])
+        self.norm_adj = torch.sparse.FloatTensor(indices, torch.FloatTensor(coo.data), coo.shape)
+        self.norm_adj = self.norm_adj.to(self.device)
+        self.f = nn.Sigmoid()
+
+        if self.config["ssl_task"] == "FAC":
+            # Fine and Coarse
+            self.g_i_iv = nn.Linear(self.latent_dim, self.latent_dim)
+            self.g_v_iv = nn.Linear(self.latent_dim, self.latent_dim)
+            self.g_iv_iva = nn.Linear(self.latent_dim, self.latent_dim)
+            self.g_a_iva = nn.Linear(self.latent_dim, self.latent_dim)
+            self.g_iva_ivat = nn.Linear(self.latent_dim, self.latent_dim // 2)
+            self.g_t_ivat = nn.Linear(self.latent_dim, self.latent_dim // 2)
+            nn.init.xavier_uniform_(self.g_i_iv.weight)
+            nn.init.xavier_uniform_(self.g_v_iv.weight)
+            nn.init.xavier_uniform_(self.g_iv_iva.weight)
+            nn.init.xavier_uniform_(self.g_a_iva.weight)
+            nn.init.xavier_uniform_(self.g_iva_ivat.weight)
+            nn.init.xavier_uniform_(self.g_t_ivat.weight)
+            self.ssl_temp = self.config["ssl_temp"]
+        elif self.config["ssl_task"] in ["FD", "FD+FM"]:
+            # Feature dropout
+            self.ssl_criterion = nn.CrossEntropyLoss()
+            self.ssl_temp = self.config["ssl_temp"]
+            self.dropout_rate = self.config["dropout_rate"]
+            self.dropout = nn.Dropout(p=self.dropout_rate)
+        elif self.config["ssl_task"] == "FM":
+            # Feature Masking
+            self.ssl_criterion = nn.CrossEntropyLoss()
+            self.ssl_temp = self.config["ssl_temp"]
+
+    def compute(self):
+        users_emb = self.embedding_user.weight
+        items_emb = self.embedding_item.weight
+
+        if self.v_feat is not None:
+            self.v_dense_emb = self.v_dense(self.v_feat)  # v=>id
+        if self.config["dataset"] != "kwai":
+            if self.a_feat is not None:
+                self.a_dense_emb = self.a_dense(self.a_feat)  # a=>id
+            if self.t_feat is not None:
+                self.t_dense_emb = self.t_dense(self.t_feat)  # t=>id
+
+        def compute_graph(u_emb, i_emb):
+            all_emb = torch.cat([u_emb, i_emb])
+            embs = [all_emb]
+            g_droped = self.norm_adj
+            for _ in range(self.n_layers):
+                all_emb = torch.sparse.mm(g_droped, all_emb)
+                embs.append(all_emb)
+            embs = torch.stack(embs, dim=1)
+            light_out = torch.mean(embs, dim=1)
+            return light_out
+
+        self.i_emb = compute_graph(users_emb, items_emb)
+        self.i_emb_u, self.i_emb_i = torch.split(self.i_emb, [self.num_users, self.num_items])
+        self.v_emb = compute_graph(users_emb, self.v_dense_emb)
+        self.v_emb_u, self.v_emb_i = torch.split(self.v_emb, [self.num_users, self.num_items])
+        if self.config["dataset"] != "kwai":
+            if self.a_feat is not None:
+                self.a_emb = compute_graph(users_emb, self.a_dense_emb)
+                self.a_emb_u, self.a_emb_i = torch.split(self.a_emb, [self.num_users, self.num_items])
+            if self.t_feat is not None:
+                self.t_emb = compute_graph(users_emb, self.t_dense_emb)
+                self.t_emb_u, self.t_emb_i = torch.split(self.t_emb, [self.num_users, self.num_items])
+
+        # multi - modal features fusion
+        if self.config["dataset"] == "kwai":
+            user = self.embedding_user_after_GCN(
+                self.mm_fusion([self.i_emb_u, self.v_emb_u]))
+            item = self.embedding_item_after_GCN(
+                self.mm_fusion([self.i_emb_i, self.v_emb_i]))
+        else:
+            user = self.embedding_user_after_GCN(self.mm_fusion([self.i_emb_u, self.v_emb_u, self.t_emb_u]))
+            item = self.embedding_item_after_GCN(self.mm_fusion([self.i_emb_i, self.v_emb_i, self.t_emb_i]))
+
+        return user, item
+
+    def feature_dropout(self, users_idx, items_idx):
+        users_emb = self.embedding_user.weight
+        items_emb = self.embedding_item.weight
+
+        v_dense = self.v_dense_emb
+        if self.config["data.input.dataset"] != "kwai":
+            a_dense = self.a_dense_emb
+            t_dense = self.t_dense_emb
+
+        def compute_graph(u_emb, i_emb):
+            all_emb = torch.cat([u_emb, i_emb])
+            ego_emb_sub_1 = all_emb
+            ego_emb_sub_2 = all_emb
+            # embs = [all_emb]
+            embs_sub_1 = [ego_emb_sub_1]
+            embs_sub_2 = [ego_emb_sub_2]
+
+            g_droped = self.norm_adj
+
+            for _ in range(self.n_layers):
+                ego_emb_sub_1 = self.dropout(torch.sparse.mm(g_droped, ego_emb_sub_1))
+                ego_emb_sub_2 = self.dropout(torch.sparse.mm(g_droped, ego_emb_sub_2))
+                embs_sub_2.append(ego_emb_sub_1)
+                embs_sub_1.append(ego_emb_sub_2)
+            embs_sub_1 = torch.stack(embs_sub_1, dim=1)
+            embs_sub_2 = torch.stack(embs_sub_2, dim=1)
+
+            light_out_sub_1 = torch.mean(embs_sub_1, dim=1)
+            light_out_sub_2 = torch.mean(embs_sub_2, dim=1)
+
+            users_sub_1, items_sub_1 = torch.split(light_out_sub_1, [self.num_users, self.num_items])
+            users_sub_2, items_sub_2 = torch.split(light_out_sub_2, [self.num_users, self.num_items])
+            return users_sub_1[users_idx], items_sub_1[items_idx], users_sub_2[users_idx], items_sub_2[items_idx]
+
+        i_emb_u_sub_1, i_emb_i_sub_1, i_emb_u_sub_2, i_emb_i_sub_2 = compute_graph(users_emb, items_emb)
+        v_emb_u_sub_1, v_emb_i_sub_1, v_emb_u_sub_2, v_emb_i_sub_2 = compute_graph(users_emb, v_dense)
+        if self.config["data.input.dataset"] != "kwai":
+            a_emb_u_sub_1, a_emb_i_sub_1, a_emb_u_sub_2, a_emb_i_sub_2 = compute_graph(users_emb, a_dense)
+            t_emb_u_sub_1, t_emb_i_sub_1, t_emb_u_sub_2, t_emb_i_sub_2 = compute_graph(users_emb, t_dense)
+
+        if self.config["data.input.dataset"] == "kwai":
+            users_sub_1 = self.embedding_user_after_GCN(self.mm_fusion([i_emb_u_sub_1, v_emb_u_sub_1]))
+            items_sub_1 = self.embedding_item_after_GCN(self.mm_fusion([i_emb_i_sub_1, v_emb_i_sub_1]))
+            users_sub_2 = self.embedding_user_after_GCN(self.mm_fusion([i_emb_u_sub_2, v_emb_u_sub_2]))
+            items_sub_2 = self.embedding_item_after_GCN(self.mm_fusion([i_emb_i_sub_2, v_emb_i_sub_2]))
+        else:
+            users_sub_1 = self.embedding_user_after_GCN(
+                self.mm_fusion([i_emb_u_sub_1, v_emb_u_sub_1, a_emb_u_sub_1, t_emb_u_sub_1]))
+            items_sub_1 = self.embedding_item_after_GCN(
+                self.mm_fusion([i_emb_i_sub_1, v_emb_i_sub_1, a_emb_i_sub_1, t_emb_i_sub_1]))
+            users_sub_2 = self.embedding_user_after_GCN(
+                self.mm_fusion([i_emb_u_sub_2, v_emb_u_sub_2, a_emb_u_sub_2, t_emb_u_sub_2]))
+            items_sub_2 = self.embedding_item_after_GCN(
+                self.mm_fusion([i_emb_i_sub_2, v_emb_i_sub_2, a_emb_i_sub_2, t_emb_i_sub_2]))
+
+        users_sub_1 = torch.nn.functional.normalize(users_sub_1, dim=1)
+        users_sub_2 = torch.nn.functional.normalize(users_sub_2, dim=1)
+        items_sub_1 = torch.nn.functional.normalize(items_sub_1, dim=1)
+        items_sub_2 = torch.nn.functional.normalize(items_sub_2, dim=1)
+
+        logits_user = torch.mm(users_sub_1, users_sub_2.T)
+        logits_user /= self.ssl_temp
+        labels_user = torch.tensor(list(range(users_sub_2.shape[0]))).to(self.device)
+        ssl_loss_user = self.ssl_criterion(logits_user, labels_user)
+
+        logits_item = torch.mm(items_sub_1, items_sub_2.T)
+        logits_item /= self.ssl_temp
+        labels_item = torch.tensor(list(range(items_sub_2.shape[0]))).to(self.device)
+        ssl_loss_item = self.ssl_criterion(logits_item, labels_item)
+
+        return ssl_loss_user + ssl_loss_item
+
+    def feature_masking(self, users_idx, items_idx, dropout=False):
+        users_emb = self.embedding_user.weight
+        items_emb = self.embedding_item.weight
+
+        rand_range = 4 if self.config["data.input.dataset"] != "kwai" else 2
+        rand_idx1 = np.random.randint(rand_range)
+        rand_idx2 = 0
+        while True:
+            rand_idx2 = np.random.randint(rand_range)
+            if rand_idx2 != rand_idx1:
+                break
+
+        v_dense = self.v_dense_emb
+        if self.config["data.input.dataset"] != "kwai":
+            a_dense = self.a_dense_emb
+            t_dense = self.t_dense_emb
+
+        def compute_graph(u_emb, i_emb, idx):
+            all_emb_1 = torch.cat([u_emb,
+                                   i_emb if rand_idx1 != idx else torch.zeros((self.num_items, self.latent_dim)).to(
+                                       self.device)])
+            all_emb_2 = torch.cat([u_emb,
+                                   i_emb if rand_idx2 != idx else torch.zeros((self.num_items, self.latent_dim)).to(
+                                       self.device)])
+            ego_emb_sub_1 = all_emb_1
+            ego_emb_sub_2 = all_emb_2
+            embs_sub_1 = [ego_emb_sub_1]
+            embs_sub_2 = [ego_emb_sub_2]
+            g_droped = self.norm_adj
+
+            for _ in range(self.n_layers):
+                ego_emb_sub_1 = torch.sparse.mm(g_droped, ego_emb_sub_1)
+                ego_emb_sub_2 = torch.sparse.mm(g_droped, ego_emb_sub_2)
+                if dropout:
+                    ego_emb_sub_1 = self.dropout(ego_emb_sub_1)
+                    ego_emb_sub_2 = self.dropout(ego_emb_sub_2)
+                embs_sub_2.append(ego_emb_sub_1)
+                embs_sub_1.append(ego_emb_sub_2)
+            embs_sub_1 = torch.stack(embs_sub_1, dim=1)
+            embs_sub_2 = torch.stack(embs_sub_2, dim=1)
+
+            light_out_sub_1 = torch.mean(embs_sub_1, dim=1)
+            light_out_sub_2 = torch.mean(embs_sub_2, dim=1)
+
+            users_sub_1, items_sub_1 = torch.split(light_out_sub_1, [self.num_users, self.num_items])
+            users_sub_2, items_sub_2 = torch.split(light_out_sub_2, [self.num_users, self.num_items])
+            return users_sub_1[users_idx], items_sub_1[items_idx], users_sub_2[users_idx], items_sub_2[items_idx]
+
+        i_emb_u_sub_1, i_emb_i_sub_1, i_emb_u_sub_2, i_emb_i_sub_2 = compute_graph(users_emb, items_emb, idx=3)
+        v_emb_u_sub_1, v_emb_i_sub_1, v_emb_u_sub_2, v_emb_i_sub_2 = compute_graph(users_emb, v_dense, idx=0)
+        if self.config["data.input.dataset"] != "kwai":
+            a_emb_u_sub_1, a_emb_i_sub_1, a_emb_u_sub_2, a_emb_i_sub_2 = compute_graph(users_emb, a_dense, idx=1)
+            t_emb_u_sub_1, t_emb_i_sub_1, t_emb_u_sub_2, t_emb_i_sub_2 = compute_graph(users_emb, t_dense, idx=2)
+
+        if self.config["data.input.dataset"] == "kwai":
+            users_sub_1 = self.embedding_user_after_GCN(self.mm_fusion([i_emb_u_sub_1, v_emb_u_sub_1]))
+            items_sub_1 = self.embedding_item_after_GCN(self.mm_fusion([i_emb_i_sub_1, v_emb_i_sub_1]))
+            users_sub_2 = self.embedding_user_after_GCN(self.mm_fusion([i_emb_u_sub_2, v_emb_u_sub_2]))
+            items_sub_2 = self.embedding_item_after_GCN(self.mm_fusion([i_emb_i_sub_2, v_emb_i_sub_2]))
+        else:
+            users_sub_1 = self.embedding_user_after_GCN(
+                self.mm_fusion([i_emb_u_sub_1, v_emb_u_sub_1, a_emb_u_sub_1, t_emb_u_sub_1]))
+            items_sub_1 = self.embedding_item_after_GCN(
+                self.mm_fusion([i_emb_i_sub_1, v_emb_i_sub_1, a_emb_i_sub_1, t_emb_i_sub_1]))
+            users_sub_2 = self.embedding_user_after_GCN(
+                self.mm_fusion([i_emb_u_sub_2, v_emb_u_sub_2, a_emb_u_sub_2, t_emb_u_sub_2]))
+            items_sub_2 = self.embedding_item_after_GCN(
+                self.mm_fusion([i_emb_i_sub_2, v_emb_i_sub_2, a_emb_i_sub_2, t_emb_i_sub_2]))
+
+        users_sub_1 = torch.nn.functional.normalize(users_sub_1, dim=1)
+        users_sub_2 = torch.nn.functional.normalize(users_sub_2, dim=1)
+        items_sub_1 = torch.nn.functional.normalize(items_sub_1, dim=1)
+        items_sub_2 = torch.nn.functional.normalize(items_sub_2, dim=1)
+
+        logits_user = torch.mm(users_sub_1, users_sub_2.T)
+        logits_user /= self.ssl_temp
+        labels_user = torch.tensor(list(range(users_sub_2.shape[0]))).to(self.device)
+        ssl_loss_user = self.ssl_criterion(logits_user, labels_user)
+
+        logits_item = torch.mm(items_sub_1, items_sub_2.T)
+        logits_item /= self.ssl_temp
+        labels_item = torch.tensor(list(range(items_sub_2.shape[0]))).to(self.device)
+        ssl_loss_item = self.ssl_criterion(logits_item, labels_item)
+
+        return ssl_loss_user + ssl_loss_item
+
+    def fac(self, idx):
+        x_i_iv = self.g_i_iv(self.i_emb_i[idx])
+        x_v_iv = self.g_v_iv(self.v_emb_i[idx])
+        v_logits = torch.mm(x_i_iv, x_v_iv.T)
+
+        v_logits /= self.ssl_temp
+        v_labels = torch.tensor(list(range(x_i_iv.shape[0]))).to(self.device)
+        v_loss = self.infonce_criterion(v_logits, v_labels)
+        if self.config["dataset"] != "kwai":
+            x_iv_iva = self.g_iv_iva(x_i_iv)
+            # x_a_iva = self.g_a_iva(self.a_emb_i[idx])
+            # a_logits = torch.mm(x_iv_iva, x_a_iva.T)
+            # a_logits /= self.ssl_temp
+            # a_labels = torch.tensor(list(range(x_iv_iva.shape[0]))).to(self.device)
+            # a_loss = self.infonce_criterion(a_logits, a_labels)
+            #
+            x_iva_ivat = self.g_iva_ivat(x_iv_iva)
+            x_t_ivat = self.g_t_ivat(self.t_emb_i[idx])
+
+            t_logits = torch.mm(x_iva_ivat, x_t_ivat.T)
+            t_logits /= self.ssl_temp
+            t_labels = torch.tensor(list(range(x_iva_ivat.shape[0]))).to(self.device)
+            t_loss = self.infonce_criterion(t_logits, t_labels)
+
+            #return v_loss + a_loss + t_loss
+            return v_loss + t_loss
+        else:
+            return v_loss
+
+    def full_sort_predict(self, interaction, candidate_items=None):
+        users = interaction[0]
+        users_emb = self.all_users[users]
+        if candidate_items is None:
+            items_emb = self.all_items
+        else:
+            items_emb = self.all_items[torch.tensor(candidate_items).long().to(self.device)]
+        scores = torch.matmul(users_emb, items_emb.t())
+        return self.f(scores)
+
+    def getEmbedding(self, users, pos_items, neg_items):
+        self.all_users, self.all_items = self.compute()
+        users_emb = self.all_users[users]
+        pos_emb = self.all_items[pos_items]
+        users_emb_ego = self.embedding_user(users)
+        pos_emb_ego = self.embedding_item(pos_items)
+
+        if neg_items is None:
+            neg_emb_ego = neg_emb = None
+        else:
+            neg_emb = self.all_items[neg_items]
+            neg_emb_ego = self.embedding_item(neg_items)
+
+        return users_emb, pos_emb, neg_emb, users_emb_ego, pos_emb_ego, neg_emb_ego
+
+    def calculate_loss(self, interaction):
+        # multi-task loss
+        users, pos = interaction[0], interaction[1]
+        main_loss = self.infonce(users, pos)
+        ssl_loss = self.compute_ssl(users, pos)
+        return main_loss + self.config['ssl_alpha'] * ssl_loss
+
+    def ssl_loss(self, users, pos):
+        # compute ssl loss
+        self.getEmbedding(users.long(), pos.long(), None)
+        return self.compute_ssl(users, pos)
+
+    def compute_ssl(self, users, items):
+        if self.config["ssl_task"] == "FAC":
+            return self.fac(items)
+        elif self.config["ssl_task"] == "FD":
+            return self.feature_dropout(users.long(), items.long())
+        elif self.config["ssl_task"] == "FM":
+            return self.feature_masking(users.long(), items.long())
+        elif self.config["ssl_task"] == "FD+FM":
+            return self.feature_masking(users.long(), items.long(), dropout=True)
+
+    def forward(self, users, items):
+        all_users, all_items = self.compute()
+        users_emb = all_users[users]
+        items_emb = all_items[items]
+        inner_pro = torch.mul(users_emb, items_emb)
+        gamma = torch.sum(inner_pro, dim=1)
+        return gamma.detach()
+
+    def mm_fusion(self, reps: list):
+        if self.mm_fusion_mode == "concat":
+            z = torch.cat(reps, dim=1)
+        elif self.mm_fusion_mode == "mean":
+            z = torch.mean(torch.stack(reps), dim=0)
+        return z
+
+    def infonce(self, users, pos):
+        (users_emb, pos_emb, neg_emb,
+         userEmb0, posEmb0, negEmb0) = self.getEmbedding(users.long(), pos.long(), None)
+        users_emb = torch.nn.functional.normalize(users_emb, dim=1)
+        pos_emb = torch.nn.functional.normalize(pos_emb, dim=1)
+        logits = torch.mm(users_emb, pos_emb.T)
+        logits /= self.temp
+        labels = torch.tensor(list(range(users_emb.shape[0]))).to(self.device)
+
+        return self.infonce_criterion(logits, labels)
+
+    def create_u_embeding_i(self):
+        self.embedding_user = torch.nn.Embedding(num_embeddings=se
+2025-12-16 19:36:11 - INFO - [DRAGON] Attempt 1 final_output: ### 1) Shape / module check (mental inference)
+
+- **Inputs (training)**: interaction triplets `(user, pos_item, neg_item)` from the trainer.
+- **Core tensors**:
+  - User ID embedding: `(n_users, d)`
+  - Item modality init embeddings:
+    - visual: either `Linear(v_feat)->(n_items,d)` or trainable `(n_items,d)` if `v_feat` missing
+    - text: either `Linear(t_feat)->(n_items,d)` or trainable `(n_items,d)` if `t_feat` missing
+- **Heterogeneous graph learning (per modality)**: LightGCN on the **same** normalized bipartite adjacency:
+  - outputs per modality: `u_m, i_m` each `(n_users,d)` / `(n_items,d)` using **sum over layers** as in the paper.
+- **Fusion**:
+  - User: attentive concat with scalar `alpha` (init 0.5): `concat(alpha*u_v, (1-alpha)*u_t)` → `(n_users,2d)` → linear proj → `(n_users,d)`
+  - Item: direct concat `concat(i_v, i_t)` → `(n_items,2d)` → linear proj → `(n_items,d)`
+- **Homogeneous graphs** (frozen):
+  - User-user co-occurrence: top-k by common-item counts, attention-softmax row-normalized sparse adj; 1-layer propagation.
+  - Item-item semantic: per modality cosine kNN top-k, binarized; fused with weights (default image=0.1, text=0.9); 1-layer propagation.
+- **Dual reps**:
+  - `z_u = u_f + h_u`, `z_i = i_f + h_i` → both `(.,d)`
+- **Scoring**: inner product `z_u · z_i`
+- **Loss**: BPR + L2 regularization.
+
+### 2) Implemented / written files
+
+- Model code written to:  
+  `/data2/liyu/llh/rn/MMRec_2/src/models/dragon.py`
+- Hyperparameter config written to:  
+  `/data2/liyu/llh/rn/MMRec_2/src/configs/model/DRAGON.yaml`
+
+### 4) Summary (changes, fidelity, gaps)
+
+- Implemented DRAGON per provided paper description:
+  - modality-specific LightGCN (L=2), attentive concat for users (alpha init 0.5), concat for items
+  - frozen user co-occurrence graph (topk=10) with attention-softmax
+  - frozen item semantic graph via cosine kNN + binarization + modality-weighted fusion (image weight default 0.1)
+  - dual-representation summation + BPR optimization
+- Kept grid search minimal: only `learning_rate` over `[1e-4, 5e-4]`.
+- Remaining potential gaps (paper/interface ambiguity, documented in code):
+  - exact dataset feature field names assumed as `dataset.v_feat` / `dataset.t_feat`
+  - item semantic graph is computed with chunked matmul for practicality (still cosine top-k as specified).
+
+No system tests were run yet (awaiting benchmark/smoke-test logs).
+2025-12-16 19:36:11 - INFO - Executing command in '/data2/liyu/llh/rn/MMRec_2/src': python run_benchmark.py --model=DRAGON --dataset baby --gpu=7
+2025-12-16 19:36:33 - INFO - [DRAGON] run_code exit=0, log tail:
+0041    precision@10: 0.0032    precision@20: 0.0026    precision@50: 0.0020    map@5: 0.0102    map@10: 0.0116    map@20: 0.0129    map@50: 0.0142    ,
+    best test: recall@5: 0.0186    recall@10: 0.0301    recall@20: 0.0483    recall@50: 0.0938    ndcg@5: 0.0126    ndcg@10: 0.0163    ndcg@20: 0.0210    ndcg@50: 0.0301    precision@5: 0.0041    precision@10: 0.0033    precision@20: 0.0027    precision@50: 0.0021    map@5: 0.0103    map@10: 0.0118    map@20: 0.0130    map@50: 0.0144
+    █████████████ BEST ████████████████
+    16 Dec 19:36    INFO 	Parameters: ['seed', 'learning_rate']=(999, 0.0005),
+[+] 解析成功: {'recall@5': 0.0186, 'recall@10': 0.0301, 'recall@20': 0.0483, 'recall@50': 0.0938, 'ndcg@5': 0.0126, 'ndcg@10': 0.0163, 'ndcg@20': 0.021, 'ndcg@50': 0.0301, 'precision@5': 0.0041, 'precision@10': 0.0033, 'precision@20': 0.0027, 'precision@50': 0.0021, 'map@5': 0.0103, 'map@10': 0.0118, 'map@20': 0.013, 'map@50': 0.0144}
+[+] 排行榜已更新: /data2/liyu/llh/rn/MMRec_2/src/leaderboard.csv
+
+2025-12-16 19:36:45 - INFO - Finished node DRAGON_2023 in 158.55s | Status=Success
+2025-12-16 19:36:45 - INFO - Task finished.

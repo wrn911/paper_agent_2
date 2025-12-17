@@ -1,0 +1,828 @@
+2025-12-16 20:15:41 - INFO - Worker starting with 1 nodes.
+2025-12-16 20:15:41 - INFO - Starting test task for 1 nodes.
+2025-12-16 20:15:42 - INFO - [PGL] System prompt: 
+You are a paper-reproduction ReAct agent. Primary goal: faithfully implement the paper. Do not hide errors; use smoke-test feedback to fix root causes.
+
+[Tools & Permissions]
+- Only use the provided tools: read/write allowed files, apply patches to allowed files.
+- You may ONLY read/write the two specific files of the current paper: the model code file and the hyperparameter file. Everything else is forbidden.
+- You cannot execute shell commands yourself; the system will run the benchmark command and return the log.
+
+[Required Workflow]
+- Start with a mental shape/module check (inputs, outputs, losses, data flow).
+- Implement the paper as described; if the paper is ambiguous, state minimal assumptions inline as comments/config choices.
+- Write code + config to the given paths via tools (no raw code in replies).
+- Treat failing smoke tests as signals: inspect logs, fix the cause per paper intent, and re-write files. Do not wrap or silence errors to pass.
+- Avoid broad try/except; prefer explicit, narrow error handling only when the paper implies it.
+- Conclude with brief changes + whether tests (if any) were run/passed; note any remaining deviations from the paper.
+
+[Delivery Requirements]
+- Prioritize paper fidelity over “just running.” Keep hyperparameter search minimal and defaults reasonable.
+- Maintain device consistency; keep replies brief; no large code dumps in replies (write files instead).
+
+[Global Knowledge]
+- Use only generalizable tips from the knowledge base; ignore dataset-specific or misleading items unless explicitly applicable.
+- Current knowledge:
+## Generalizable
+
+- **Align early with the host framework’s contracts (config/dataset/trainer hooks)**  
+  Treat `config` as a framework object (often mapping-like, not a Python `dict`): prefer `key in config` and `config[key]`; don’t assume `.get()`. Implement expected lifecycle hooks (e.g., pre/post-epoch) as safe no-ops if unused. Keep method signatures harness-compatible (e.g., accept `(users, pos_items, neg_items)` if the trainer expects it).
+
+- **Use a small compatibility accessor for configs**  
+  Centralize config reads in a helper (e.g., `cfg(key, default=_MISSING)`) that supports mapping-style access and fails loudly for truly required keys.
+
+- **Don’t assume constructor inputs are raw datasets**  
+  `dataset` may be a wrapper/dataloader. Prefer framework-initialized attributes (`self.n_users`, `self.n_items`) or resolve through common wrapper paths (`obj.dataset`, etc.) with a prioritized lookup.
+
+- **Normalize data/interface variability at one boundary**  
+  Convert whichever interaction/graph representation you receive (sparse matrix, edge index, table/columns, callable provider) into one canonical internal format and use it everywhere else.
+
+- **Establish a “shape/field contract” up front**  
+  Validate and assert critical shapes/ID spaces early (user/item ID ranges, `[n_items, d]` modality matrices, embedding dims, graph adjacency shapes). This prevents silent broadcasting, mismatched fusion/projection dims, and hard-to-debug indexing errors.
+
+- **Fix root causes at the failing call site; don’t mask errors**  
+  Avoid broad `try/except` that hides interface mismatches or missing fields; fix the incompatible assumption (config access, dataset field names, interaction format) directly.
+
+- **Make the smallest explicit assumptions and document them**  
+  When paper/framework interfaces are ambiguous (feature keys, available modalities, required fields), state minimal assumptions in code/comments and keep them easy to change.
+
+- **Cache/precompute expensive artifacts carefully**  
+  Precompute and reuse fixed expensive structures (e.g., kNN graphs) when they are intended to be static; add explicit reset/refresh points for epoch-scoped caches to avoid staleness after parameter updates.
+
+- **Avoid caching autograd-tied tensors across optimization steps**  
+  Don’t reuse training-time tensors that carry computation graphs across steps (can trigger “backward through the graph a second time”). Recompute per batch, or cache only detached outputs meant for evaluation.
+
+- **Treat timeouts and “no space left” as runtime-budget/config issues first**  
+  Check and reduce multiplicative workload sources (epochs × sweeps × repeated eval/logging/preprocessing) before suspecting model bugs. Prefer small, explicit config changes (fewer epochs, disable sweeps) over code hacks.
+
+- **Keep hyperparameter search tiny and stability-focused**  
+  Limit sweeps to ~1–3 high-impact knobs (typically LR, regularization, dropout/corruption strength). Disable sweeps for smoke tests/CI and document how to restore full tuning.
+
+- **Gate expensive preprocessing behind config flags**  
+  Make heavy steps (e.g., item–item kNN building) optional and controllable via config for portability across datasets/environments.
+
+- **Keep multi-term objectives explicit and inspectable**  
+  Separate loss terms with explicit weights so stability/ablation/debugging is straightforward; ensure objective “mode switches” are internally consistent.
+
+## Pending/Specific
+
+- **Modality optionality and dataset field-name quirks (repo/dataset-specific)**  
+  Handling missing modalities is generally useful, but the exact feature keys/encodings (`v_feat`, `t_feat`, etc.) and storage location (dataset vs wrapper) vary widely—require per-repo adapters and explicit assertions/fallbacks.
+
+- **Graph construction details tied to particular papers/models**  
+  Model-specific requirements (e.g., particular normalization, self-loops, bipartite vs homogeneous adjacency, shallow “one-step” refinement graphs, frozen vs learned graphs) should stay paper-scoped.
+
+- **Top‑K neighbor choices and co-occurrence settings**  
+  Concrete K defaults (e.g., 10, 40–50) and stability claims are dataset/paper dependent; keep only the reminder to tune K and sparsification per dataset/budget.
+
+- **Paper-specific SSL/contrastive formulations**  
+  Details like “no negatives” vs “in-batch negatives,” “stop-gradient + predictor,” view generation via embedding dropout, and mode-specific heads/augmentations depend on the target paper; generalize only as “keep SSL implementation consistent with the stated objective.”
+
+- **Fusion operator implementation specifics**  
+  Notes like “concat needs projection; sum/max doesn’t” depend on the architecture/config; retain only as a caution to keep tensor dims and config consistent.
+
+- **“Disable unclear objectives by default”**  
+  Choosing defaults like `cl_weight=0` can be pragmatic for uncertain reproductions, but it’s an experimental policy decision rather than universal guidance.
+
+- **Scalability note: full similarity matrices for kNN**  
+  The warning is general, but the remedy (chunked kNN vs ANN libraries, exact tradeoffs) is implementation/dataset dependent; keep paper-specific prescriptions out of the main KB.
+
+- **Paper-scale training schedules vs CI-smoke settings**  
+  Statements like “~1000 epochs” being paper-default (MGCN/FREEDOM/etc.) are reproduction-specific; keep as documentation guidance for those papers rather than universal defaults.
+
+- **Anti-pattern reminders (retain as “don’t do this”)**  
+  - Assuming `config.get()` exists on framework configs.  
+  - Assuming `dataset` is always the raw dataset with `n_users/n_items`.  
+  - Hardcoding universal feature field names.  
+  - Masking errors with broad `try/except`.  
+  - Leaving sweeps enabled in smoke tests and then only lowering epochs.
+
+2025-12-16 20:15:42 - INFO - [PGL] Attempt 1 user prompt: 
+Goal: Under restricted tools, reproduce the specified paper method. Generate the model code + hyperparameter file. Logs (if any) are for diagnosing root causes—do not suppress errors to make the run look successful.
+
+[Paper Node]
+- Title: PGL_2025
+- Method name: PGL
+- Core idea: Existing GNN-based multimedia recommendation methods focus on global structural features (co-occurrence patterns) but underutilize local structural features (individual information), leading to overly similar user preferences. PGL addresses this by extracting a principal subgraph from the user-item interaction graph using global-aware and local-aware extraction operators. Message passing on this subgraph captures both co-occurrence patterns and individual information. A self-supervised task enhances discriminability of representations.
+- Method description: 
+# PGL
+
+To better capture local structural features,we propose the principal graph learning framework for multimedia recommendation. It first extracts the principal subgraph from the complete user-item interaction graph,and then employs message passing on the principal subgraph.The framework of PGL is illustrated in Figure 4.
+
+# Embedding
+
+As with many works (Zhou and Shen 2023; Yu et al. 2023c), we map the user unique hot ID representations to the user ID embeddings as the user raw representations.For the items, we map the content features using MLP to a low dimensional representation and concatenate them to obtain the item raw representations.Because the item content features are more informative than the item ID representations, it is more conducive to the model convergence.
+
+# Principal Graph Learning
+
+To better mine local structural features, we propose the principal user-item graph learning. Specifically, during model training，we first extract the principal subgraph from the complete graph structure.We then perform message passing on this principal subgraph.This approach not only mines richer individual information,but also captures cooccurrence patterns through multi-hop message passing. During model inference, we employ the message passing mechanism on the original complete graph instead, avoiding the problem of insufficient global information utilization caused by subgraph fragmentation.
+
+Formally, the message passing of $x$ is represented as:
+
+$$
+\tilde { x } = H ( F ( \tilde { \mathbf { A } } ) ) x .
+$$
+
+![](images/216d4a68e13db886fe0d9d00d329b431ef17c81e992cc70a0efc6e6dbe5709c0.jpg)  
+Figure 4: Comparison of (b) the proposed framework PGL and (a) exsiting framework LATTICE.
+
+For subgraph extraction $F ( \cdot )$ ， we design two operators: global-aware and local-aware subgraph extraction. The idea is to extract the most informative subgraph from the global/local perspective.
+
+· Global-Aware Extraction Truncated reconstruction $\tilde { \mathbf { A } }$ identifies the principal subgraphs with the highest information content, guided by the global structural signal. Specifically, we first decompose $\tilde { \mathbf { A } }$ using Singular Value Decomposition (SVD) (Rangarajan 2Oo1). However, performing the exact SVD on $\tilde { \mathbf { A } }$ is computationally expensive,making it impractical in real-world scenarios.Instead,we adopt the randomized SVD algorithm proposed by (Halko,Martinsson,and Tropp 2O11). It approximates the range of the input matrix with a low-rank orthonormal matrix,and performs SVD on this smaller matrix. It is formally represented as:
+
+$$
+\dot { \mathbf { U } } , \dot { \mathbf { A } } , \dot { \mathbf { U } } ^ { \top } = \operatorname { A p p r o x } { \mathbf { S } } \mathbf { V } \mathbf { D } ( \tilde { \mathbf { A } } , d ) ,
+$$
+
+where $\dot { \pmb { \Lambda } }$ is eigenvalues matrix, $\dot { \mathbf { U } }$ is corresponding eigenvector matrix, and $d$ is the rank of decomposed matrix.It is equal to the dimension of user/item raw representations.
+
+Next,we employ the truncated reconstruction to obtain principal subgraph $\dot { \bf A }$ ：
+
+$$
+\begin{array} { r } { \ddot { { \mathbf U } } , \ddot { { \mathbf A } } , \dot { { \mathbf U } } ^ { \top } = \operatorname { T r u n c a t i o n } ( \dot { { \mathbf U } } , \dot { { \mathbf A } } , \dot { { \mathbf U } } ^ { \top } , \gamma ) , } \\ { \dot { { \mathbf A } } = \ddot { { \mathbf U } } \ddot { { \mathbf A } } \ddot { { \mathbf U } } ^ { \top } , \qquad } \\ { \ddot { { \mathbf A } } = { \mathrm { S p a r s i f i c a t i o n } ( \dot { { \mathbf A } } , \epsilon ) } , } \end{array}
+$$
+
+where $\gamma$ is the truncation ratio within the range $( 0 , 1 )$ The truncation function retains the eigenvalues belonging to the range before or after $\gamma d$ ，resulting in $\ddot { \textbf { A } } =$ $\mathrm { D i a g } ( \lambda _ { 1 } , \cdot \cdot \cdot , \lambda _ { \gamma d } , 0 , \cdot \cdot \cdot , 0 , \lambda _ { ( 1 - \gamma ) d } , \cdot \cdot \cdot , \lambda _ { d } )$ . The sparsification function sets elements with reconstruction values less than the threshold $\epsilon$ (typically $1 e ^ { - 3 }$ ）to O, ensuring the obtained principal graph $\dot { \bf A }$ remains sparse.
+
+· Local-Aware Extraction The expressive principal subgraph can also be extracted from the complete graph by leveraging local exposure information. The extraction process is formalized as:
+
+$$
+\ddot { \mathbf { A } } = \mathrm { E x t r a c t i o n } ( \tilde { \mathbf { A } } , p ) .
+$$
+
+Here, the extraction function is a multinomial samplig procedure, where $p$ denotes the percentage of original edges. Experiments finds that most of the time, $p = 0 . 3$ achieves an optimal result. The probability of sampling an edge connecting user $u$ and item $i$ is $1 / \sqrt { | \mathcal { N } _ { u } | } \sqrt { | \mathcal { N } _ { j } | }$ . This weighting scheme is motivated on the intuition that edges connected to nodes with lower exposure tend to be more reliable and informative (Wu et al. 2021).
+
+# Latent Graph Learning
+
+Following (Zhang et al. 2021; Zhou and Shen 2023; Yu et al. 2023c), we also conduct message passing on the latent itemitems to capture collaborative signals under modality information. Specifically, we first pre-construct latent item-item graphs based on similarity of item raw modality features $e _ { i , m }$ . It avoids the learning of latent graph structures in the classical LATTICE. Then, we use $k \mathbf { N N }$ sparsization $( k { = } 1 0 )$ and Laplacian regularization to obtain the normalized matrix $\mathbf { S } _ { m }$ . Besides, each modality item-item matrices are weighted added to obtain the final item-item similarity matrix S.Here, we still use the message passing mechanism of Equation 8.
+
+# Prediction
+
+To make recommendations for user $u$ ,we predict the interaction scores between the user $u$ and all candidate items, and choose $K$ top-ranked items as recommendations to the user $u$ .The interaction score is calculated as:
+
+$$
+\begin{array} { r } { \begin{array} { c } { f _ { \mathrm { p r e d i c t } } ( u , i ) = \hat { \mathbf { e } } _ { u } ^ { \intercal } \hat { \mathbf { e } } _ { i } , } \\ { \hat { \mathbf { e } } _ { u } = \mathbf { e } _ { u } ^ { \mathrm { p r i n c i p a l } } + \mathbf { e } _ { u } ^ { \mathrm { l a t e n t } } , \hat { \mathbf { e } } _ { i } = \mathbf { e } _ { i } ^ { \mathrm { p r i n c i p a l } } + \mathbf { e } _ { i } ^ { \mathrm { l a t e n t } } , } \end{array} } \end{array}
+$$
+
+where $\mathbf { e } _ { i } ^ { \mathrm { { p r i n c i p a l } } }$ and $\mathbf { e } _ { i } ^ { \mathrm { { l a t e n t } } }$ represent the output of principal graph learning and latent graph learning correspondingly. A
+
+<table><tr><td>Datasets</td><td colspan="4">Baby</td><td colspan="4">Sports</td><td colspan="4">Clothing</td></tr><tr><td></td><td>Methods|R@10 R@20 N@10 N@20|</td><td></td><td></td><td></td><td></td><td></td><td></td><td>R@10 R@20 N@10 N@20|</td><td>|R@10 R@20 N@10 N@20</td><td></td><td></td><td></td></tr><tr><td>MF-BPR(UAI&#x27;09)</td><td>10.0357</td><td></td><td></td><td>0.0575 0.0192 0.0249</td><td>0.0432</td><td>20.0653 0.0241</td><td></td><td>0.0298</td><td>0.0187</td><td>0.0279 0.0103</td><td></td><td>0.0126</td></tr><tr><td>LightGCN (SIGIR&#x27;20)</td><td>0.0479</td><td>0.0754 0.0257</td><td></td><td>0.0328</td><td>0.0569</td><td></td><td>0.0864 0.0311</td><td>0.0387</td><td>0.0340</td><td>0.0526 0.0188</td><td></td><td>0.0236</td></tr><tr><td>DirectAU (KDD&#x27;22)</td><td>0.0460</td><td>）0.0672 0.0263</td><td></td><td>30.0318</td><td>0.0630</td><td>）0.0958</td><td>30.0351</td><td>0.0436</td><td>0.0468</td><td>0.0683 0.0257</td><td></td><td>0.0311</td></tr><tr><td>LayerGCN (ICDE&#x27;23)</td><td>0.0529</td><td>0.0820</td><td>0.0281</td><td>0.0355</td><td>0.0594</td><td></td><td>0.0916 0.0323</td><td>0.0406</td><td>0.0371</td><td>0.0566</td><td>0.0200</td><td>0.0247</td></tr><tr><td>VBPR (AAAI&#x27;16)</td><td>0.0423</td><td>0.0663</td><td>0.0223</td><td>0.0284</td><td>0.0558</td><td></td><td>0.0856 0.0307</td><td>0.0384</td><td>0.0281</td><td>0.0415</td><td>0.0158</td><td>0.0192</td></tr><tr><td>MMGCN (MM&#x27;19)</td><td></td><td>0.0378 0.0615 0.0200</td><td></td><td>0.0261</td><td>0.0370</td><td>）0.06050.0193</td><td></td><td>0.0254</td><td>0.0218</td><td>0.0345 0.0110</td><td></td><td>0.0142</td></tr><tr><td>DualGNN (TMM&#x27;21)</td><td>0.0448</td><td>：0.0716</td><td>50.0240</td><td>0.0309</td><td>0.0568</td><td>0.0859</td><td>0.0310</td><td>0.0385</td><td>0.0454</td><td>0.0683</td><td>0.0241</td><td>0.0299</td></tr><tr><td>LATTICE (MM&#x27;21)</td><td>0.0547</td><td>0.0850</td><td>0.0292</td><td>0.0370</td><td>0.0620</td><td>0.0953</td><td>0.0335</td><td>0.0421</td><td>0.0492</td><td>0.0733</td><td>0.0268</td><td>0.0330</td></tr><tr><td>SLMRec (TMM&#x27;22)</td><td>0.0529</td><td>0.0775</td><td>50.0290</td><td>0.0353</td><td>0.0663</td><td>0.0990</td><td>0.0365</td><td>0.0450</td><td>0.0452</td><td>0.0675</td><td>0.0247</td><td>0.0303</td></tr><tr><td>MICRO (TKDE&#x27;22)</td><td>0.0584</td><td>0.0929</td><td>0.0318</td><td>0.0407</td><td>0.0679</td><td>0.1050</td><td>0.0367</td><td>0.0463</td><td>0.0521</td><td>0.0772</td><td>0.0283</td><td>0.0347</td></tr><tr><td>BM3 (WWW&#x27;23)</td><td>0.0564</td><td>0.0883</td><td>0.0301</td><td>0.0383</td><td>0.0656</td><td>0.0980</td><td>0.0355</td><td>0.0438</td><td>0.0422</td><td>0.0621</td><td>0.0231</td><td>0.0281</td></tr><tr><td>MMSSL (WWW&#x27;23)</td><td>0.0613</td><td>0.0971</td><td></td><td>0.0326 0.0420</td><td>0.0673</td><td>0.1013</td><td>0.0380</td><td>0.0474</td><td>0.0531</td><td>0.0797</td><td>0.0291</td><td>0.0359</td></tr><tr><td>FREEDOM (MM&#x27;23)</td><td>0.0627</td><td>0.0992</td><td>0.0330</td><td>0.0424</td><td>0.0717</td><td>0.1089</td><td>0.0385</td><td>0.0481</td><td>0.0629</td><td>0.0941</td><td>0.0341</td><td>0.0420</td></tr><tr><td>MGCN (MM&#x27;23)</td><td>0.0620</td><td>）0.0964</td><td>0.0339</td><td>0.0427</td><td>0.0729</td><td></td><td>0.1106 0.0397</td><td>0.0496</td><td>0.0641</td><td>0.0945</td><td>0.0347</td><td>0.0428</td></tr><tr><td>LGMRec (AAAI&#x27;24)</td><td>0.0644</td><td>0.1002</td><td>0.0349</td><td>0.0440</td><td></td><td>0.0720 0.1068</td><td>30.0390</td><td>）0.0480</td><td>0.0555</td><td>0.0828</td><td>0.0302</td><td>0.0371</td></tr><tr><td>PGL w/ global (Ours)</td><td>0.0663</td><td>0.1040 0.0351</td><td></td><td>0.0448</td><td>0.0760</td><td>0.1144</td><td>0.0410</td><td>0.0509</td><td>0.0690</td><td>0.1014 0.0369</td><td></td><td>0.0451</td></tr><tr><td>PGL w/ local (Ours)</td><td>0.0676 (</td><td>0.1022</td><td></td><td>0.0360 0.0449</td><td></td><td></td><td>0.0789 0.1174 0.0428 0.0528</td><td></td><td></td><td>0.0712 0.1034 0.0385 0.0467</td><td></td><td></td></tr><tr><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr></table>
+
+Table 1: Performance comparison of baselines and our method in terms of Recall $@ \mathrm { K }$ $( \mathbb { R } ^ { \ @ K ) }$ ，and NDCG@K $( \mathrm { N } @ K )$ . The best result is in boldface and the second best is underlined.
+
+high score suggests that the user $u$ is more likely to click the item $i$
+
+# Optimization
+
+During the phase of model training,we adopt the Bayesian Personalized Ranking(BPR） loss $\mathcal { L } _ { \mathrm { B P R } }$ as the basic optimization task,which assumes that users prefer historically interacted items over unclicked ones.And it is combined with auxiliary self-supervised tasks to jointly update the representations of users and items:
+
+$$
+\begin{array} { r } { \mathcal { L } = \mathcal { L } _ { \mathrm { B P R } } + \lambda _ { \mathrm { S S L } } \mathcal { L } _ { \mathrm { S S L } } , } \end{array}
+$$
+
+where $\lambda _ { \mathrm { S S L } }$ is the hyperparameter to control the intensity of the self-supervised auxiliary task.
+
+The self-supervised task is used to further enhance the distinguishability of representations. Specifically, it first masks certain node representations through feature masking,and then maximizes the consistency of features after two random masks through in batch InfoNCE:
+
+$$
+\begin{array} { r l } & { { \hat { \bf e } } _ { u } ^ { \prime } , { \hat { \bf e } } _ { u } ^ { \prime \prime } = { \bf M a s k } ( { \hat { \bf e } } _ { u } , \rho ) , } \\ & { { \hat { \bf e } } _ { i } ^ { \prime } , { \hat { \bf e } } _ { i } ^ { \prime \prime } = { \bf M a s k } ( { \hat { \bf e } } _ { i } , \rho ) , } \\ & { \quad \mathcal { L } _ { \mathrm { S S L } } = \displaystyle \sum _ { u \in \mathcal { U } } - \log \frac { ( { \hat { \bf e } } _ { u } ^ { \prime } \cdot { \hat { \bf e } } _ { u } ^ { \prime \prime } / \tau ) } { \sum _ { v \in \mathcal { U } } \exp ( { \hat { \bf e } } _ { v } ^ { \prime } \cdot { \hat { \bf e } } _ { v } ^ { \prime } / \tau ) } } \\ & { \quad \quad \quad + \displaystyle \sum _ { i \in \mathcal { L } } - \log \frac { \exp ( { \hat { \bf e } } _ { i } ^ { \prime } \cdot { \hat { \bf e } } _ { i } ^ { \prime \prime } / \tau ) } { \sum _ { j \in \mathcal { L } } \exp ( { \hat { \bf e } } _ { j } ^ { \prime } \cdot { \hat { \bf e } } _ { i } ^ { \prime \prime } / \tau ) } , } \end{array}
+$$
+
+where $\rho$ controls the feature masking ratio and $\tau$ is the temperature hyper-parameter of the softmax function.
+- Hyperparameter definition: 
+- γ (truncation ratio): Controls the truncation in global-aware extraction. Typical value: 0.25, range: (0,1)
+- p (sampling ratio): Percentage of original edges in local-aware extraction. Typical value: 0.3
+- λ_SSL (weight for SSL): Controls the intensity of the self-supervised loss. Searched in [0.005, 0.01, 0.05, 0.1, 0.5]
+- ρ (feature masking ratio): Controls the masking in self-supervised task. Searched in [0.05, 0.1, 0.2, 0.3, 0.4]
+- τ (temperature): Temperature in the softmax for self-supervised task. Typical value: 0.2
+
+[Graph Context]
+[Related Methods 1]
+Model: LGMRec_2024
+Idea: LGMRec addresses two key limitations in multimodal recommender systems: the coupling of collaborative and multimodal signals during user embedding updates, and the lack of robust global user interest modeling to alleviate sparse interactions. It proposes a novel framework that jointly learns local and global user interests by independently capturing collaborative-related and modality-related embeddings through local graph propagation, and modeling global dependencies via hypergraph learning on implicit attributes, enhanced with cross-modal contrastive learning for robustness.
+Relation:
+<COMPARISON_CONTEXT>
+Similarities:
+1. Both perform LightGCN-style message passing on the user–item interaction graph to model collaborative signals.
+2. Both optimize a BPR objective with an auxiliary contrastive self-supervision term and use inner-product scoring.
+3. Both incorporate item multimodal features via projection into a shared space and propagate content signals beyond interactions.
+4. Both fuse multiple representation streams (collaborative/local and content/global) into final user/item embeddings for prediction.
+
+Differences:
+1. PGL extracts a training-time principal subgraph from the interaction graph (global SVD-based or local sampling) and uses the full graph at inference, whereas LGMRec operates on the full graph and adds a separate modality-aware hypergraph built with learnable attribute vectors.
+2. PGL’s global/content structure is pre-constructed per-modality item–item kNN graphs (fixed by feature similarity), while LGMRec learns item/user–hyperedge assignments via Gumbel-Softmax and performs trainable hypergraph message passing.
+3. LGMRec decouples collaborative and modality streams (separate LightGCN paths) and initializes user modal features by averaging interacted items’ features; PGL uses user ID embeddings and item MLP-mapped features (concatenated), without a dedicated user-side modality stream.
+4. PGL’s SSL uses feature masking with InfoNCE on two masked views of the same node and fuses principal+latent embeddings, whereas LGMRec applies cross-modal contrastive learning on global embeddings and fuses three components with normalization and a tunable weight for global signals.
+</COMPARISON_CONTEXT>
+
+[Related Methods 2]
+Model: MGCN_2023
+Idea: The paper proposes a Multi-View Graph Convolutional Network (MGCN) for multimedia recommendation to address two main issues: modality noise contamination and incomplete user preference modeling. It introduces a behavior-guided purifier to filter out noise from modality features, enhances representations through a multi-view information encoder, and uses a behavior-aware fuser that adaptively fuses modality features based on user preferences. The method also incorporates a self-supervised auxiliary task to maximize mutual information between behavior and modality features, thus improving recommendation accuracy.
+Relation:
+<COMPARISON_CONTEXT>
+Similarities:
+1. Both model two views by propagating over a user–item graph for collaborative signals and per-modality item–item KNN graphs for semantic correlations.
+2. Both optimize BPR as the main objective with an additional InfoNCE-style self-supervised auxiliary loss.
+3. Both obtain final user/item embeddings by summing a behavior/ID-driven component with a multimodal/semantic component and score via inner product.
+
+Differences:
+1. PGL trains on a learned principal subgraph (via SVD-based global truncation or exposure-aware local sampling) and infers on the full graph, while MGCN always uses the full interaction graph.
+2. PGL’s SSL uses feature masking to create two views of the same node (within-view consistency), whereas MGCN aligns cross-view pairs between behavior (ID) features and fused multimodal features.
+3. MGCN employs behavior-guided purification and behavior-aware, user-specific fusion (shared/specific decomposition + gates), while PGL simply weights per-modality item–item matrices into one graph and sums principal/latent embeddings.
+4. PGL emphasizes item content features (MLP-mapped, deemphasizing item IDs) and fuses item–item graphs across modalities early, whereas MGCN relies heavily on ID embeddings for GCN and gating and keeps modality-specific graphs until a behavior-aware fusion stage.
+</COMPARISON_CONTEXT>
+Example Python Code:
+<REFERENCE_CODE_ID="MGCN_2023">
+# coding: utf-8
+# @email: y463213402@gmail.com
+r"""
+MGCN
+################################################
+Reference:
+    https://github.com/demonph10/MGCN
+    ACM MM'2023: [Multi-View Graph Convolutional Network for Multimedia Recommendation]
+"""
+
+import os
+import numpy as np
+import scipy.sparse as sp
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+from common.abstract_recommender import GeneralRecommender
+from utils.utils import build_sim, compute_normalized_laplacian, build_knn_neighbourhood, build_knn_normalized_graph
+
+
+class MGCN(GeneralRecommender):
+    def __init__(self, config, dataset):
+        super(MGCN, self).__init__(config, dataset)
+        self.sparse = True
+        self.cl_loss = config['cl_loss']
+        self.n_ui_layers = config['n_ui_layers']
+        self.embedding_dim = config['embedding_size']
+        self.knn_k = config['knn_k']
+        self.n_layers = config['n_layers']
+        self.reg_weight = config['reg_weight']
+
+        # load dataset info
+        self.interaction_matrix = dataset.inter_matrix(form='coo').astype(np.float32)
+
+        self.user_embedding = nn.Embedding(self.n_users, self.embedding_dim)
+        self.item_id_embedding = nn.Embedding(self.n_items, self.embedding_dim)
+        nn.init.xavier_uniform_(self.user_embedding.weight)
+        nn.init.xavier_uniform_(self.item_id_embedding.weight)
+
+        dataset_path = os.path.abspath(config['data_path'] + config['dataset'])
+        image_adj_file = os.path.join(dataset_path, 'image_adj_{}_{}.pt'.format(self.knn_k, self.sparse))
+        text_adj_file = os.path.join(dataset_path, 'text_adj_{}_{}.pt'.format(self.knn_k, self.sparse))
+
+        self.norm_adj = self.get_adj_mat()
+        self.R = self.sparse_mx_to_torch_sparse_tensor(self.R).float().to(self.device)
+        self.norm_adj = self.sparse_mx_to_torch_sparse_tensor(self.norm_adj).float().to(self.device)
+
+
+        if self.v_feat is not None:
+            self.image_embedding = nn.Embedding.from_pretrained(self.v_feat, freeze=False)
+            if os.path.exists(image_adj_file):
+                image_adj = torch.load(image_adj_file)
+            else:
+                image_adj = build_sim(self.image_embedding.weight.detach())
+                image_adj = build_knn_normalized_graph(image_adj, topk=self.knn_k, is_sparse=self.sparse,
+                                                       norm_type='sym')
+                torch.save(image_adj, image_adj_file)
+            self.image_original_adj = image_adj.cuda()
+
+        if self.t_feat is not None:
+            self.text_embedding = nn.Embedding.from_pretrained(self.t_feat, freeze=False)
+            if os.path.exists(text_adj_file):
+                text_adj = torch.load(text_adj_file)
+            else:
+                text_adj = build_sim(self.text_embedding.weight.detach())
+                text_adj = build_knn_normalized_graph(text_adj, topk=self.knn_k, is_sparse=self.sparse, norm_type='sym')
+                torch.save(text_adj, text_adj_file)
+            self.text_original_adj = text_adj.cuda()
+
+        if self.v_feat is not None:
+            self.image_trs = nn.Linear(self.v_feat.shape[1], self.embedding_dim)
+        if self.t_feat is not None:
+            self.text_trs = nn.Linear(self.t_feat.shape[1], self.embedding_dim)
+
+        self.softmax = nn.Softmax(dim=-1)
+
+        self.query_common = nn.Sequential(
+            nn.Linear(self.embedding_dim, self.embedding_dim),
+            nn.Tanh(),
+            nn.Linear(self.embedding_dim, 1, bias=False)
+        )
+
+        self.gate_v = nn.Sequential(
+            nn.Linear(self.embedding_dim, self.embedding_dim),
+            nn.Sigmoid()
+        )
+
+        self.gate_t = nn.Sequential(
+            nn.Linear(self.embedding_dim, self.embedding_dim),
+            nn.Sigmoid()
+        )
+
+        self.gate_image_prefer = nn.Sequential(
+            nn.Linear(self.embedding_dim, self.embedding_dim),
+            nn.Sigmoid()
+        )
+
+        self.gate_text_prefer = nn.Sequential(
+            nn.Linear(self.embedding_dim, self.embedding_dim),
+            nn.Sigmoid()
+        )
+
+        self.tau = 0.5
+
+    def pre_epoch_processing(self):
+        pass
+
+    def get_adj_mat(self):
+        adj_mat = sp.dok_matrix((self.n_users + self.n_items, self.n_users + self.n_items), dtype=np.float32)
+        adj_mat = adj_mat.tolil()
+        R = self.interaction_matrix.tolil()
+
+        adj_mat[:self.n_users, self.n_users:] = R
+        adj_mat[self.n_users:, :self.n_users] = R.T
+        adj_mat = adj_mat.todok()
+
+        def normalized_adj_single(adj):
+            rowsum = np.array(adj.sum(1))
+
+            d_inv = np.power(rowsum, -0.5).flatten()
+            d_inv[np.isinf(d_inv)] = 0.
+            d_mat_inv = sp.diags(d_inv)
+
+            norm_adj = d_mat_inv.dot(adj_mat)
+            norm_adj = norm_adj.dot(d_mat_inv)
+            # norm_adj = adj.dot(d_mat_inv)
+            # print('generate single-normalized adjacency matrix.')
+            return norm_adj.tocoo()
+
+        # norm_adj_mat = normalized_adj_single(adj_mat + sp.eye(adj_mat.shape[0]))
+        norm_adj_mat = normalized_adj_single(adj_mat)
+        norm_adj_mat = norm_adj_mat.tolil()
+        self.R = norm_adj_mat[:self.n_users, self.n_users:]
+        # norm_adj_mat = normalized_adj_single(adj_mat + sp.eye(adj_mat.shape[0]))
+        return norm_adj_mat.tocsr()
+
+    def sparse_mx_to_torch_sparse_tensor(self, sparse_mx):
+        """Convert a scipy sparse matrix to a torch sparse tensor."""
+        sparse_mx = sparse_mx.tocoo().astype(np.float32)
+        indices = torch.from_numpy(np.vstack((sparse_mx.row, sparse_mx.col)).astype(np.int64))
+        values = torch.from_numpy(sparse_mx.data)
+        shape = torch.Size(sparse_mx.shape)
+        return torch.sparse.FloatTensor(indices, values, shape)
+
+    def forward(self, adj, train=False):
+        if self.v_feat is not None:
+            image_feats = self.image_trs(self.image_embedding.weight)
+        if self.t_feat is not None:
+            text_feats = self.text_trs(self.text_embedding.weight)
+
+        # Behavior-Guided Purifier
+        image_item_embeds = torch.multiply(self.item_id_embedding.weight, self.gate_v(image_feats))
+        text_item_embeds = torch.multiply(self.item_id_embedding.weight, self.gate_t(text_feats))
+
+        # User-Item View
+        item_embeds = self.item_id_embedding.weight
+        user_embeds = self.user_embedding.weight
+        ego_embeddings = torch.cat([user_embeds, item_embeds], dim=0)
+        all_embeddings = [ego_embeddings]
+        for i in range(self.n_ui_layers):
+            side_embeddings = torch.sparse.mm(adj, ego_embeddings)
+            ego_embeddings = side_embeddings
+            all_embeddings += [ego_embeddings]
+        all_embeddings = torch.stack(all_embeddings, dim=1)
+        all_embeddings = all_embeddings.mean(dim=1, keepdim=False)
+        content_embeds = all_embeddings
+
+        # Item-Item View
+        if self.sparse:
+            for i in range(self.n_layers):
+                image_item_embeds = torch.sparse.mm(self.image_original_adj, image_item_embeds)
+        else:
+            for i in range(self.n_layers):
+                image_item_embeds = torch.mm(self.image_original_adj, image_item_embeds)
+        image_user_embeds = torch.sparse.mm(self.R, image_item_embeds)
+        image_embeds = torch.cat([image_user_embeds, image_item_embeds], dim=0)
+        if self.sparse:
+            for i in range(self.n_layers):
+                text_item_embeds = torch.sparse.mm(self.text_original_adj, text_item_embeds)
+        else:
+            for i in range(self.n_layers):
+                text_item_embeds = torch.mm(self.text_original_adj, text_item_embeds)
+        text_user_embeds = torch.sparse.mm(self.R, text_item_embeds)
+        text_embeds = torch.cat([text_user_embeds, text_item_embeds], dim=0)
+
+        # Behavior-Aware Fuser
+        att_common = torch.cat([self.query_common(image_embeds), self.query_common(text_embeds)], dim=-1)
+        weight_common = self.softmax(att_common)
+        common_embeds = weight_common[:, 0].unsqueeze(dim=1) * image_embeds + weight_common[:, 1].unsqueeze(
+            dim=1) * text_embeds
+        sep_image_embeds = image_embeds - common_embeds
+        sep_text_embeds = text_embeds - common_embeds
+
+        image_prefer = self.gate_image_prefer(content_embeds)
+        text_prefer = self.gate_text_prefer(content_embeds)
+        sep_image_embeds = torch.multiply(image_prefer, sep_image_embeds)
+        sep_text_embeds = torch.multiply(text_prefer, sep_text_embeds)
+        side_embeds = (sep_image_embeds + sep_text_embeds + common_embeds) / 3
+
+        all_embeds = content_embeds + side_embeds
+
+        all_embeddings_users, all_embeddings_items = torch.split(all_embeds, [self.n_users, self.n_items], dim=0)
+
+        if train:
+            return all_embeddings_users, all_embeddings_items, side_embeds, content_embeds
+
+        return all_embeddings_users, all_embeddings_items
+
+    def bpr_loss(self, users, pos_items, neg_items):
+        pos_scores = torch.sum(torch.mul(users, pos_items), dim=1)
+        neg_scores = torch.sum(torch.mul(users, neg_items), dim=1)
+
+        regularizer = 1. / 2 * (users ** 2).sum() + 1. / 2 * (pos_items ** 2).sum() + 1. / 2 * (neg_items ** 2).sum()
+        regularizer = regularizer / self.batch_size
+
+        maxi = F.logsigmoid(pos_scores - neg_scores)
+        mf_loss = -torch.mean(maxi)
+
+        emb_loss = self.reg_weight * regularizer
+        reg_loss = 0.0
+        return mf_loss, emb_loss, reg_loss
+
+    def InfoNCE(self, view1, view2, temperature):
+        view1, view2 = F.normalize(view1, dim=1), F.normalize(view2, dim=1)
+        pos_score = (view1 * view2).sum(dim=-1)
+        pos_score = torch.exp(pos_score / temperature)
+        ttl_score = torch.matmul(view1, view2.transpose(0, 1))
+        ttl_score = torch.exp(ttl_score / temperature).sum(dim=1)
+        cl_loss = -torch.log(pos_score / ttl_score)
+        return torch.mean(cl_loss)
+
+    def calculate_loss(self, interaction):
+        users = interaction[0]
+        pos_items = interaction[1]
+        neg_items = interaction[2]
+
+        ua_embeddings, ia_embeddings, side_embeds, content_embeds = self.forward(
+            self.norm_adj, train=True)
+
+        u_g_embeddings = ua_embeddings[users]
+        pos_i_g_embeddings = ia_embeddings[pos_items]
+        neg_i_g_embeddings = ia_embeddings[neg_items]
+
+        batch_mf_loss, batch_emb_loss, batch_reg_loss = self.bpr_loss(u_g_embeddings, pos_i_g_embeddings,
+                                                                      neg_i_g_embeddings)
+
+        side_embeds_users, side_embeds_items = torch.split(side_embeds, [self.n_users, self.n_items], dim=0)
+        content_embeds_user, content_embeds_items = torch.split(content_embeds, [self.n_users, self.n_items], dim=0)
+        cl_loss = self.InfoNCE(side_embeds_items[pos_items], content_embeds_items[pos_items], 0.2) + self.InfoNCE(
+            side_embeds_users[users], content_embeds_user[users], 0.2)
+
+        return batch_mf_loss + batch_emb_loss + batch_reg_loss + self.cl_loss * cl_loss
+
+    def full_sort_predict(self, interaction):
+        user = interaction[0]
+
+        restore_user_e, restore_item_e = self.forward(self.norm_adj)
+        u_embeddings = restore_user_e[user]
+
+        # dot with all item embedding to accelerate
+        scores = torch.matmul(u_embeddings, restore_item_e.transpose(0, 1))
+        return scores
+</REFERENCE_CODE_ID>
+Example YAML Config:
+<REFERENCE_CONFIG_ID="MGCN_2023">
+embedding_size: 64
+n_ui_layers: 2
+n_layers: 1
+
+learning_rate_scheduler: [0.96, 50]
+lambda_coeff: 0.9
+reg_weight: 1e-04
+
+knn_k: 10
+
+learning_rate: 0.001
+
+cl_loss: [0.001,0.01,0.1]
+
+hyper_parameters: ["cl_loss"]
+</REFERENCE_CONFIG_ID>
+
+[File Paths] (only these two files are allowed)
+- Model code: /data2/liyu/llh/rn/MMRec_2/src/models/pgl.py
+- Hyperparam config: /data2/liyu/llh/rn/MMRec_2/src/configs/model/PGL.yaml
+
+[Hyperparam Constraint]
+- At most 3 grid-search hyperparameters; keep the rest as fixed defaults.
+
+Flow: shape inference -> write files -> if logs show errors, fix per paper intent (no error masking) -> brief summary of fidelity/gaps.
+
+2025-12-16 20:17:10 - INFO - [PGL] Attempt 1 final_output: Implemented **PGL (PGL_2025)** with:
+- User ID embeddings; item raw embeddings from projected multimodal features (concat + optional fuse).
+- **Principal Graph Learning**: training-time principal subgraph extraction (**local-aware** default; **global-aware SVD** optional) + LightGCN-style propagation; inference uses full graph.
+- **Latent Graph Learning**: fixed per-modality item–item kNN graphs from modality embeddings, weighted-summed, then propagated; users obtain latent embeddings via \(R @ e_i\).
+- Loss: **BPR + L2 reg + feature-masking InfoNCE SSL** (in-batch) on sampled users/items.
+
+Wrote files:
+- Model code: `/data2/liyu/llh/rn/MMRec_2/src/models/pgl.py`
+- Config: `/data2/liyu/llh/rn/MMRec_2/src/configs/model/PGL.yaml` (≤3 tuned hparams: `lambda_ssl`, `mask_ratio`, `p`)
+
+No smoke-test logs were provided yet, so nothing has been debugged against the training harness.
+2025-12-16 20:17:10 - INFO - Executing command in '/data2/liyu/llh/rn/MMRec_2/src': python run_benchmark.py --model=PGL --dataset baby --gpu=7
+2025-12-16 20:17:28 - INFO - [PGL] run_code exit=1, log tail:
+=================
+[*] 开始复现任务 - 模型: PGL | 数据集: baby | GPU: 7
+============================================================
+[>] 执行: /data6/liyu/conda/paper_agent/bin/python -u main.py --model PGL --dataset baby --gpu_id 7
+    epochs=1
+    hyper_parameters=['seed', 'lambda_ssl', 'mask_ratio', 'p']
+    16 Dec 20:17    INFO =========1/27: Parameters:['seed', 'lambda_ssl', 'mask_ratio', 'p']=(999, 0.01, 0.1, 0.2)=======
+    Traceback (most recent call last):
+    File "/data2/liyu/llh/rn/MMRec_2/src/main.py", line 30, in <module>
+    File "/data2/liyu/llh/rn/MMRec_2/src/utils/quick_start.py", line 74, in quick_start
+    File "/data2/liyu/llh/rn/MMRec_2/src/models/pgl.py", line 197, in __init__
+    File "/data2/liyu/llh/rn/MMRec_2/src/models/pgl.py", line 224, in _build_latent_item_graph
+    File "/data6/liyu/conda/paper_agent/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1964, in __getattr__
+    raise AttributeError(
+    AttributeError: 'PGL' object has no attribute 'config'
+
+----------------- 错误堆栈片段 ------------------------------
+Traceback (most recent call last):
+File "/data2/liyu/llh/rn/MMRec_2/src/main.py", line 30, in <module>
+quick_start(model=args.model, dataset=args.dataset, config_dict=config_dict, save_model=True)
+File "/data2/liyu/llh/rn/MMRec_2/src/utils/quick_start.py", line 74, in quick_start
+model = get_model(config['model'])(config, train_data).to(config['device'])
+File "/data2/liyu/llh/rn/MMRec_2/src/models/pgl.py", line 197, in __init__
+self._build_latent_item_graph()
+File "/data2/liyu/llh/rn/MMRec_2/src/models/pgl.py", line 224, in _build_latent_item_graph
+if 'data_path' in self.config and 'dataset' in self.config:
+File "/data6/liyu/conda/paper_agent/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1964, in __getattr__
+raise AttributeError(
+AttributeError: 'PGL' object has no attribute 'config'
+------------------------------------------------------------
+[-] 详细日志已保存: logs/PGL_baby_20251216_201728.log
+[-] baby 任务执行失败或未解析到指标。
+
+2025-12-16 20:17:28 - INFO - [PGL] Attempt 2 user prompt: 
+The system-run smoke test failed. Use the log below to fix the root cause per the paper (do not wrap/silence errors), then rewrite the necessary files.
+
+[Last Output]
+=================
+[*] 开始复现任务 - 模型: PGL | 数据集: baby | GPU: 7
+============================================================
+[>] 执行: /data6/liyu/conda/paper_agent/bin/python -u main.py --model PGL --dataset baby --gpu_id 7
+    epochs=1
+    hyper_parameters=['seed', 'lambda_ssl', 'mask_ratio', 'p']
+    16 Dec 20:17    INFO =========1/27: Parameters:['seed', 'lambda_ssl', 'mask_ratio', 'p']=(999, 0.01, 0.1, 0.2)=======
+    Traceback (most recent call last):
+    File "/data2/liyu/llh/rn/MMRec_2/src/main.py", line 30, in <module>
+    File "/data2/liyu/llh/rn/MMRec_2/src/utils/quick_start.py", line 74, in quick_start
+    File "/data2/liyu/llh/rn/MMRec_2/src/models/pgl.py", line 197, in __init__
+    File "/data2/liyu/llh/rn/MMRec_2/src/models/pgl.py", line 224, in _build_latent_item_graph
+    File "/data6/liyu/conda/paper_agent/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1964, in __getattr__
+    raise AttributeError(
+    AttributeError: 'PGL' object has no attribute 'config'
+
+----------------- 错误堆栈片段 ------------------------------
+Traceback (most recent call last):
+File "/data2/liyu/llh/rn/MMRec_2/src/main.py", line 30, in <module>
+quick_start(model=args.model, dataset=args.dataset, config_dict=config_dict, save_model=True)
+File "/data2/liyu/llh/rn/MMRec_2/src/utils/quick_start.py", line 74, in quick_start
+model = get_model(config['model'])(config, train_data).to(config['device'])
+File "/data2/liyu/llh/rn/MMRec_2/src/models/pgl.py", line 197, in __init__
+self._build_latent_item_graph()
+File "/data2/liyu/llh/rn/MMRec_2/src/models/pgl.py", line 224, in _build_latent_item_graph
+if 'data_path' in self.config and 'dataset' in self.config:
+File "/data6/liyu/conda/paper_agent/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1964, in __getattr__
+raise AttributeError(
+AttributeError: 'PGL' object has no attribute 'config'
+------------------------------------------------------------
+[-] 详细日志已保存: logs/PGL_baby_20251216_201728.log
+[-] baby 任务执行失败或未解析到指标。
+
+
+Rules:
+- Only modify these two files: /data2/liyu/llh/rn/MMRec_2/src/models/pgl.py and /data2/liyu/llh/rn/MMRec_2/src/configs/model/PGL.yaml.
+- Fix the actual cause suggested by the error/log, avoid broad try/except, and keep behavior aligned with the paper.
+- End with a brief conclusion.
+
+2025-12-16 20:18:21 - INFO - [PGL] Attempt 2 final_output: Fixed the crash root-cause from the log:
+
+- **Cause:** `PGL` referenced `self.config` in `_build_latent_item_graph()`, but the base `GeneralRecommender` in this repo doesn’t expose `self.config`.
+- **Fix (paper-aligned, no error masking):** explicitly store the incoming `config` as `self.config` in `__init__` and keep using it for dataset-path caching of kNN graphs.
+
+Files updated:
+- `/data2/liyu/llh/rn/MMRec_2/src/models/pgl.py` (added `self.config = config` and rewrote file with this fix applied)
+
+No config change was required.
+2025-12-16 20:18:21 - INFO - Executing command in '/data2/liyu/llh/rn/MMRec_2/src': python run_benchmark.py --model=PGL --dataset baby --gpu=7
+2025-12-16 20:18:37 - INFO - [PGL] run_code exit=1, log tail:
+n/MMRec_2/src/models/pgl.py", line 247, in _build_latent_item_graph
+    File "/data6/liyu/conda/paper_agent/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1775, in _wrapped_call_impl
+    File "/data6/liyu/conda/paper_agent/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1786, in _call_impl
+    File "/data6/liyu/conda/paper_agent/lib/python3.10/site-packages/torch/nn/modules/container.py", line 250, in forward
+    File "/data6/liyu/conda/paper_agent/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1775, in _wrapped_call_impl
+    File "/data6/liyu/conda/paper_agent/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1786, in _call_impl
+    File "/data6/liyu/conda/paper_agent/lib/python3.10/site-packages/torch/nn/modules/linear.py", line 134, in forward
+    RuntimeError: Expected all tensors to be on the same device, but got mat1 is on cuda:0, different from other tensors on cpu (when checking argument in method wrapper_CUDA_addmm)
+
+", line 1786, in _call_impl
+return forward_call(*args, **kwargs)
+File "/data6/liyu/conda/paper_agent/lib/python3.10/site-packages/torch/nn/modules/container.py", line 250, in forward
+input = module(input)
+File "/data6/liyu/conda/paper_agent/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1775, in _wrapped_call_impl
+return self._call_impl(*args, **kwargs)
+File "/data6/liyu/conda/paper_agent/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1786, in _call_impl
+return forward_call(*args, **kwargs)
+File "/data6/liyu/conda/paper_agent/lib/python3.10/site-packages/torch/nn/modules/linear.py", line 134, in forward
+return F.linear(input, self.weight, self.bias)
+RuntimeError: Expected all tensors to be on the same device, but got mat1 is on cuda:0, different from other tensors on cpu (when checking argument in method wrapper_CUDA_addmm)
+------------------------------------------------------------
+[-] 详细日志已保存: logs/PGL_baby_20251216_201837.log
+[-] baby 任务执行失败或未解析到指标。
+
+2025-12-16 20:18:37 - INFO - [PGL] Attempt 3 user prompt: 
+The system-run smoke test failed. Use the log below to fix the root cause per the paper (do not wrap/silence errors), then rewrite the necessary files.
+
+[Last Output]
+n/MMRec_2/src/models/pgl.py", line 247, in _build_latent_item_graph
+    File "/data6/liyu/conda/paper_agent/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1775, in _wrapped_call_impl
+    File "/data6/liyu/conda/paper_agent/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1786, in _call_impl
+    File "/data6/liyu/conda/paper_agent/lib/python3.10/site-packages/torch/nn/modules/container.py", line 250, in forward
+    File "/data6/liyu/conda/paper_agent/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1775, in _wrapped_call_impl
+    File "/data6/liyu/conda/paper_agent/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1786, in _call_impl
+    File "/data6/liyu/conda/paper_agent/lib/python3.10/site-packages/torch/nn/modules/linear.py", line 134, in forward
+    RuntimeError: Expected all tensors to be on the same device, but got mat1 is on cuda:0, different from other tensors on cpu (when checking argument in method wrapper_CUDA_addmm)
+
+", line 1786, in _call_impl
+return forward_call(*args, **kwargs)
+File "/data6/liyu/conda/paper_agent/lib/python3.10/site-packages/torch/nn/modules/container.py", line 250, in forward
+input = module(input)
+File "/data6/liyu/conda/paper_agent/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1775, in _wrapped_call_impl
+return self._call_impl(*args, **kwargs)
+File "/data6/liyu/conda/paper_agent/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1786, in _call_impl
+return forward_call(*args, **kwargs)
+File "/data6/liyu/conda/paper_agent/lib/python3.10/site-packages/torch/nn/modules/linear.py", line 134, in forward
+return F.linear(input, self.weight, self.bias)
+RuntimeError: Expected all tensors to be on the same device, but got mat1 is on cuda:0, different from other tensors on cpu (when checking argument in method wrapper_CUDA_addmm)
+------------------------------------------------------------
+[-] 详细日志已保存: logs/PGL_baby_20251216_201837.log
+[-] baby 任务执行失败或未解析到指标。
+
+
+Rules:
+- Only modify these two files: /data2/liyu/llh/rn/MMRec_2/src/models/pgl.py and /data2/liyu/llh/rn/MMRec_2/src/configs/model/PGL.yaml.
+- Fix the actual cause suggested by the error/log, avoid broad try/except, and keep behavior aligned with the paper.
+- End with a brief conclusion.
+
+2025-12-16 20:20:16 - INFO - [PGL] Attempt 3 final_output: Root cause from the log: during `__init__`, `_build_latent_item_graph()` called the modality projection MLP (`self.v_proj/self.t_proj`) while the model parameters were still on **CPU**, but the feature tensors were already on **CUDA** → device mismatch in `Linear`.
+
+Fix (no try/except, aligned with paper intent of *fixed pre-constructed latent graphs*):
+- **Do not apply trainable projection MLPs during latent kNN graph construction in `__init__`** (before `model.to(device)` is called by the trainer).
+- Build kNN graphs from the **raw modality feature tensors** on CPU (`feat.detach().cpu()`), then move the resulting sparse adjacency to `self.device`.
+
+Updated file:
+- `/data2/liyu/llh/rn/MMRec_2/src/models/pgl.py` (rewrote to construct latent item–item graphs from CPU raw features; projections remain used in `forward()` as intended)
+
+Config unchanged.
+2025-12-16 20:20:16 - INFO - Executing command in '/data2/liyu/llh/rn/MMRec_2/src': python run_benchmark.py --model=PGL --dataset baby --gpu=7
+2025-12-16 20:20:34 - INFO - [PGL] run_code exit=1, log tail:
+] 执行: /data6/liyu/conda/paper_agent/bin/python -u main.py --model PGL --dataset baby --gpu_id 7
+    epochs=1
+    hyper_parameters=['seed', 'lambda_ssl', 'mask_ratio', 'p']
+    16 Dec 20:20    INFO =========1/27: Parameters:['seed', 'lambda_ssl', 'mask_ratio', 'p']=(999, 0.01, 0.1, 0.2)=======
+    Traceback (most recent call last):
+    File "/data2/liyu/llh/rn/MMRec_2/src/main.py", line 30, in <module>
+    File "/data2/liyu/llh/rn/MMRec_2/src/utils/quick_start.py", line 74, in quick_start
+    File "/data2/liyu/llh/rn/MMRec_2/src/models/pgl.py", line 185, in __init__
+    File "/data2/liyu/llh/rn/MMRec_2/src/models/pgl.py", line 226, in _build_latent_item_graph
+    File "/data2/liyu/llh/rn/MMRec_2/src/models/pgl.py", line 218, in _load_or_build
+    File "/data2/liyu/llh/rn/MMRec_2/src/utils/utils.py", line 180, in build_knn_normalized_graph
+    File "/data2/liyu/llh/rn/MMRec_2/src/utils/utils.py", line 140, in get_sparse_laplacian
+    ModuleNotFoundError: No module named 'torch_scatter'
+
+'model'])(config, train_data).to(config['device'])
+File "/data2/liyu/llh/rn/MMRec_2/src/models/pgl.py", line 185, in __init__
+self._build_latent_item_graph()
+File "/data2/liyu/llh/rn/MMRec_2/src/models/pgl.py", line 226, in _build_latent_item_graph
+adjs.append(_load_or_build(v_file, v_feat_cpu).coalesce().to(self.device))
+File "/data2/liyu/llh/rn/MMRec_2/src/models/pgl.py", line 218, in _load_or_build
+adj = build_knn_normalized_graph(sim, topk=self.knn_k, is_sparse=True, norm_type='sym')
+File "/data2/liyu/llh/rn/MMRec_2/src/utils/utils.py", line 180, in build_knn_normalized_graph
+edge_index, edge_weight = get_sparse_laplacian(i, v, normalization=norm_type, num_nodes=adj.shape[0])
+File "/data2/liyu/llh/rn/MMRec_2/src/utils/utils.py", line 140, in get_sparse_laplacian
+from torch_scatter import scatter_add
+ModuleNotFoundError: No module named 'torch_scatter'
+------------------------------------------------------------
+[-] 详细日志已保存: logs/PGL_baby_20251216_202034.log
+[-] baby 任务执行失败或未解析到指标。
+
+2025-12-16 20:20:34 - INFO - [PGL] Attempt 4 user prompt: 
+The system-run smoke test failed. Use the log below to fix the root cause per the paper (do not wrap/silence errors), then rewrite the necessary files.
+
+[Last Output]
+] 执行: /data6/liyu/conda/paper_agent/bin/python -u main.py --model PGL --dataset baby --gpu_id 7
+    epochs=1
+    hyper_parameters=['seed', 'lambda_ssl', 'mask_ratio', 'p']
+    16 Dec 20:20    INFO =========1/27: Parameters:['seed', 'lambda_ssl', 'mask_ratio', 'p']=(999, 0.01, 0.1, 0.2)=======
+    Traceback (most recent call last):
+    File "/data2/liyu/llh/rn/MMRec_2/src/main.py", line 30, in <module>
+    File "/data2/liyu/llh/rn/MMRec_2/src/utils/quick_start.py", line 74, in quick_start
+    File "/data2/liyu/llh/rn/MMRec_2/src/models/pgl.py", line 185, in __init__
+    File "/data2/liyu/llh/rn/MMRec_2/src/models/pgl.py", line 226, in _build_latent_item_graph
+    File "/data2/liyu/llh/rn/MMRec_2/src/models/pgl.py", line 218, in _load_or_build
+    File "/data2/liyu/llh/rn/MMRec_2/src/utils/utils.py", line 180, in build_knn_normalized_graph
+    File "/data2/liyu/llh/rn/MMRec_2/src/utils/utils.py", line 140, in get_sparse_laplacian
+    ModuleNotFoundError: No module named 'torch_scatter'
+
+'model'])(config, train_data).to(config['device'])
+File "/data2/liyu/llh/rn/MMRec_2/src/models/pgl.py", line 185, in __init__
+self._build_latent_item_graph()
+File "/data2/liyu/llh/rn/MMRec_2/src/models/pgl.py", line 226, in _build_latent_item_graph
+adjs.append(_load_or_build(v_file, v_feat_cpu).coalesce().to(self.device))
+File "/data2/liyu/llh/rn/MMRec_2/src/models/pgl.py", line 218, in _load_or_build
+adj = build_knn_normalized_graph(sim, topk=self.knn_k, is_sparse=True, norm_type='sym')
+File "/data2/liyu/llh/rn/MMRec_2/src/utils/utils.py", line 180, in build_knn_normalized_graph
+edge_index, edge_weight = get_sparse_laplacian(i, v, normalization=norm_type, num_nodes=adj.shape[0])
+File "/data2/liyu/llh/rn/MMRec_2/src/utils/utils.py", line 140, in get_sparse_laplacian
+from torch_scatter import scatter_add
+ModuleNotFoundError: No module named 'torch_scatter'
+------------------------------------------------------------
+[-] 详细日志已保存: logs/PGL_baby_20251216_202034.log
+[-] baby 任务执行失败或未解析到指标。
+
+
+Rules:
+- Only modify these two files: /data2/liyu/llh/rn/MMRec_2/src/models/pgl.py and /data2/liyu/llh/rn/MMRec_2/src/configs/model/PGL.yaml.
+- Fix the actual cause suggested by the error/log, avoid broad try/except, and keep behavior aligned with the paper.
+- End with a brief conclusion.
+
+2025-12-16 20:21:30 - INFO - [PGL] Attempt 4 final_output: Fixed the smoke-test failure caused by a missing optional dependency:
+
+- **Root cause (per log):** `utils.build_knn_normalized_graph()` imports `torch_scatter`, which is not installed → `ModuleNotFoundError: No module named 'torch_scatter'`.
+- **Paper-aligned fix:** PGL’s latent item–item graph is *pre-constructed* from modality features via kNN + symmetric normalization. I replaced the call to `build_knn_normalized_graph` with an **internal pure-PyTorch kNN graph builder** (cosine similarity + top‑k neighbors + symmetrization + \(D^{-1/2}AD^{-1/2}\)), removing the hard dependency on `torch_scatter`.
+
+Modified file:
+- `/data2/liyu/llh/rn/MMRec_2/src/models/pgl.py` (implements `_build_knn_sym_norm_adj_from_features` and uses it in `_build_latent_item_graph`)
+
+Config unchanged.
+2025-12-16 20:21:30 - INFO - Executing command in '/data2/liyu/llh/rn/MMRec_2/src': python run_benchmark.py --model=PGL --dataset baby --gpu=7
+2025-12-16 20:26:30 - WARNING - Command timed out after 300s: python run_benchmark.py --model=PGL --dataset baby --gpu=7
+2025-12-16 20:26:30 - WARNING - [PGL] run_code timed out after 300s
+2025-12-16 20:26:30 - INFO - [PGL] run_code exit=-9, log tail:
+ting [time: 2.42s, valid_score: 0.018900]
+    16 Dec 20:24    INFO test result:
+    16 Dec 20:24    INFO ██ PGL--Best validation results updated!!!
+    16 Dec 20:24    INFO best valid result: recall@5: 0.0059    recall@10: 0.0098    recall@20: 0.0189    recall@50: 0.0409    ndcg@5: 0.0038    ndcg@10: 0.0051    ndcg@20: 0.0074    ndcg@50: 0.0118    precision@5: 0.0012    precision@10: 0.0010    precision@20: 0.0010    precision@50: 0.0009    map@5: 0.0031    map@10: 0.0036    map@20: 0.0042    map@50: 0.0049
+    16 Dec 20:24    INFO test result: recall@5: 0.0051    recall@10: 0.0086    recall@20: 0.0190    recall@50: 0.0399    ndcg@5: 0.0035    ndcg@10: 0.0046    ndcg@20: 0.0073    ndcg@50: 0.0115    precision@5: 0.0011    precision@10: 0.0009    precision@20: 0.0011    precision@50: 0.0009    map@5: 0.0028    map@10: 0.0033    map@20: 0.0040    map@50: 0.0046
+    16 Dec 20:24    INFO ████Current BEST████:
+    Parameters: ['seed', 'lambda_ssl', 'mask_ratio', 'p']=(999, 0.01, 0.1, 0.2),
+
+Error: Process timed out after 300 seconds. Consider checking the code for infinite loops or reducing the number of epochs.
+2025-12-16 20:26:30 - INFO - [PGL] Attempt 5 user prompt: 
+The system-run smoke test failed. Use the log below to fix the root cause per the paper (do not wrap/silence errors), then rewrite the necessary files.
+
+[Last Output]
+ting [time: 2.42s, valid_score: 0.018900]
+    16 Dec 20:24    INFO test result:
+    16 Dec 20:24    INFO ██ PGL--Best validation results updated!!!
+    16 Dec 20:24    INFO best valid result: recall@5: 0.0059    recall@10: 0.0098    recall@20: 0.0189    recall@50: 0.0409    ndcg@5: 0.0038    ndcg@10: 0.0051    ndcg@20: 0.0074    ndcg@50: 0.0118    precision@5: 0.0012    precision@10: 0.0010    precision@20: 0.0010    precision@50: 0.0009    map@5: 0.0031    map@10: 0.0036    map@20: 0.0042    map@50: 0.0049
+    16 Dec 20:24    INFO test result: recall@5: 0.0051    recall@10: 0.0086    recall@20: 0.0190    recall@50: 0.0399    ndcg@5: 0.0035    ndcg@10: 0.0046    ndcg@20: 0.0073    ndcg@50: 0.0115    precision@5: 0.0011    precision@10: 0.0009    precision@20: 0.0011    precision@50: 0.0009    map@5: 0.0028    map@10: 0.0033    map@20: 0.0040    map@50: 0.0046
+    16 Dec 20:24    INFO ████Current BEST████:
+    Parameters: ['seed', 'lambda_ssl', 'mask_ratio', 'p']=(999, 0.01, 0.1, 0.2),
+
+Error: Process timed out after 300 seconds. Consider checking the code for infinite loops or reducing the number of epochs.
+
+Rules:
+- Only modify these two files: /data2/liyu/llh/rn/MMRec_2/src/models/pgl.py and /data2/liyu/llh/rn/MMRec_2/src/configs/model/PGL.yaml.
+- Fix the actual cause suggested by the error/log, avoid broad try/except, and keep behavior aligned with the paper.
+- End with a brief conclusion.
+
+2025-12-16 20:26:45 - INFO - [PGL] Attempt 5 final_output: The run timed out because the smoke test is doing a **27-combo hyperparameter sweep** (`seed`, `lambda_ssl`, `mask_ratio`, `p`) even with `epochs=1`, which exceeds the 300s budget. This is a config/workload issue (not an infinite loop).
+
+Fix (kept paper behavior; only reduced sweep size for CI):
+- Updated `PGL.yaml` to **remove `p` from the grid search** and reduce the sweep to just **2 hparams** (`lambda_ssl`, `mask_ratio`) with small grids. `p` remains a fixed default (`0.3`) per the paper’s typical choice.
+
+Modified file:
+- `/data2/liyu/llh/rn/MMRec_2/src/configs/model/PGL.yaml`
+
+Model code unchanged for this fix.
+2025-12-16 20:26:45 - INFO - Executing command in '/data2/liyu/llh/rn/MMRec_2/src': python run_benchmark.py --model=PGL --dataset baby --gpu=7
+2025-12-16 20:28:22 - INFO - [PGL] run_code exit=0, log tail:
+ion@10: 0.0009    precision@20: 0.0008    precision@50: 0.0006    map@5: 0.0026    map@10: 0.0031    map@20: 0.0035    map@50: 0.0039    ,
+    best test: recall@5: 0.0039    recall@10: 0.0079    recall@20: 0.0140    recall@50: 0.0267    ndcg@5: 0.0023    ndcg@10: 0.0036    ndcg@20: 0.0052    ndcg@50: 0.0077    precision@5: 0.0008    precision@10: 0.0008    precision@20: 0.0008    precision@50: 0.0006    map@5: 0.0018    map@10: 0.0023    map@20: 0.0027    map@50: 0.0031
+    █████████████ BEST ████████████████
+    16 Dec 20:28    INFO 	Parameters: ['seed', 'lambda_ssl', 'mask_ratio']=(999, 0.01, 0.2),
+[+] 解析成功: {'recall@5': 0.0061, 'recall@10': 0.0103, 'recall@20': 0.018, 'recall@50': 0.0363, 'ndcg@5': 0.0041, 'ndcg@10': 0.0054, 'ndcg@20': 0.0074, 'ndcg@50': 0.0111, 'precision@5': 0.0014, 'precision@10': 0.0012, 'precision@20': 0.001, 'precision@50': 0.0008, 'map@5': 0.0033, 'map@10': 0.0038, 'map@20': 0.0043, 'map@50': 0.0049}
+[+] 排行榜已更新: /data2/liyu/llh/rn/MMRec_2/src/leaderboard.csv
+
+2025-12-16 20:28:22 - INFO - Finished node PGL_2025 in 760.93s | Status=Success
+2025-12-16 20:28:22 - INFO - Task finished.

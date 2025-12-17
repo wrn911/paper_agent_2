@@ -1,0 +1,5 @@
+node_id,status,processing_time_seconds,error_reason
+DRAGON_2023,Success,158.55,
+BM3_2023,Success,170.19,
+MGCN_2023,Success,1076.96,
+FREEDOM_2023,Success,1160.44,
